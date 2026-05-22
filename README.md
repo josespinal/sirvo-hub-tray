@@ -21,11 +21,20 @@ https://github.com/josespinal/sirvo-hub-tray/releases
 
 ### macOS
 
-1. Open the `Sirvo-Hub_x.y.z_universal.dmg` and drag **Sirvo Hub.app** into
+1. Open the `Sirvo Hub_x.y.z_aarch64.dmg` and drag **Sirvo Hub.app** into
    `/Applications`.
-2. Because the app is not yet notarized, Gatekeeper will refuse to open it on
-   first launch. Right-click **Sirvo Hub.app**, choose **Open**, then click
-   **Open** in the confirmation dialog. Subsequent launches work normally.
+2. Because the app is not yet notarized, macOS Sequoia (15+) shows a "Sirvo
+   Hub is damaged and can't be opened" dialog on first launch. The app is
+   fine — that's Apple's hardened Gatekeeper response to unsigned apps with
+   a browser-applied quarantine flag. The old right-click → Open bypass no
+   longer works in Sequoia. Strip the quarantine flag from Terminal:
+
+   ```bash
+   xattr -dr com.apple.quarantine "/Applications/Sirvo Hub.app"
+   open "/Applications/Sirvo Hub.app"
+   ```
+
+   You only need to run this once; subsequent launches work normally.
 3. Sirvo Hub appears in the menu-bar tray.
 
 Signing/notarization is deferred — v1 ships unsigned. The auto-update channel
