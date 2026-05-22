@@ -1,0 +1,40 @@
+{
+  "tray": {
+    "running": "Hub: En ejecución",
+    "stopped": "Hub: Detenido",
+    "starting": "Hub: Iniciando…",
+    "restarting": "Hub: Reiniciando…",
+    "errored": "Hub: Error",
+    "terminals": "Terminales conectadas: {count}",
+    "lanUrl": "URL de red local: {url}",
+    "lanUrlUnknown": "URL de red local: desconocida",
+    "copyLanUrl": "Copiar URL de red local",
+    "start": "Iniciar Hub",
+    "restart": "Reiniciar Hub",
+    "stop": "Detener Hub",
+    "viewLogs": "Ver registros",
+    "autostart": "Iniciar con el sistema",
+    "language": "Idioma",
+    "languageEn": "English",
+    "languageEs": "Español",
+    "languageAuto": "Predeterminado del sistema",
+    "checkForUpdates": "Buscar actualizaciones",
+    "quit": "Salir"
+  },
+  "dialog": {
+    "stopTitle": "¿Detener el Hub?",
+    "stopBody": "Si detienes el hub, todas las terminales POS quedarán desconectadas hasta que lo inicies de nuevo. ¿Continuar?",
+    "stopConfirm": "Detener",
+    "stopCancel": "Cancelar",
+    "copied": "URL copiada al portapapeles.",
+    "updateReady": "Hay una actualización lista. ¿Reiniciar ahora para aplicarla?",
+    "updateRestart": "Reiniciar y actualizar",
+    "updateLater": "Más tarde"
+  },
+  "logs": {
+    "title": "Registros del Hub",
+    "empty": "Aún no hay registros.",
+    "clear": "Limpiar",
+    "follow": "Seguir"
+  }
+}

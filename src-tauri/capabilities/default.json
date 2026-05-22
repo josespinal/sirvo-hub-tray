@@ -1,0 +1,14 @@
+{
+  "$schema": "https://schema.tauri.app/config/2/capabilities",
+  "identifier": "default",
+  "description": "Default capability set for the tray app",
+  "windows": ["logs"],
+  "permissions": [
+    "core:default",
+    "clipboard-manager:allow-write-text",
+    "dialog:allow-confirm",
+    "autostart:default",
+    "updater:default",
+    "opener:default"
+  ]
+}

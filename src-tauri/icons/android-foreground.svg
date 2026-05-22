@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 432 432" width="432" height="432">
+  <!-- Sirvo "r" mark centered in adaptive icon safe zone (inner 66% = 288px centered in 432px) -->
+  <defs>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,700&amp;display=swap');
+    </style>
+  </defs>
+  <rect width="432" height="432" fill="#D97A2B"/>
+  <text x="216" y="310" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-weight="700" font-size="320" font-variation-settings="'opsz' 144" fill="#EFE6D6">r</text>
+</svg>

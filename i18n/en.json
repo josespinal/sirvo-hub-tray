@@ -1,0 +1,40 @@
+{
+  "tray": {
+    "running": "Hub: Running",
+    "stopped": "Hub: Stopped",
+    "starting": "Hub: Starting…",
+    "restarting": "Hub: Restarting…",
+    "errored": "Hub: Error",
+    "terminals": "Terminals connected: {count}",
+    "lanUrl": "LAN URL: {url}",
+    "lanUrlUnknown": "LAN URL: unknown",
+    "copyLanUrl": "Copy LAN URL",
+    "start": "Start Hub",
+    "restart": "Restart Hub",
+    "stop": "Stop Hub",
+    "viewLogs": "View Logs",
+    "autostart": "Start with system",
+    "language": "Language",
+    "languageEn": "English",
+    "languageEs": "Español",
+    "languageAuto": "System default",
+    "checkForUpdates": "Check for Updates",
+    "quit": "Quit"
+  },
+  "dialog": {
+    "stopTitle": "Stop the Hub?",
+    "stopBody": "Stopping the hub will disconnect all POS terminals until you start it again. Are you sure?",
+    "stopConfirm": "Stop",
+    "stopCancel": "Cancel",
+    "copied": "LAN URL copied to clipboard.",
+    "updateReady": "An update is ready. Restart now to apply?",
+    "updateRestart": "Restart and update",
+    "updateLater": "Later"
+  },
+  "logs": {
+    "title": "Hub Logs",
+    "empty": "No log output yet.",
+    "clear": "Clear",
+    "follow": "Follow"
+  }
+}

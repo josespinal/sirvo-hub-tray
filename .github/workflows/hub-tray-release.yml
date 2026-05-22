@@ -1,0 +1,98 @@
+name: hub-tray release
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: darwin-arm64
+          - os: macos-13
+            target: darwin-x64
+          - os: windows-latest
+            target: win32-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.x"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> target"
+
+      - name: Install protocol deps + build
+        run: npm install && npm run build
+        working-directory: external/source/nu_pos_sync_protocol
+
+      - name: Install hub deps
+        run: npm install
+        working-directory: external/source/nu_pos_hub
+
+      - name: Install tray deps
+        run: npm install
+
+      - name: Stage Node runtime
+        run: npm run prepare:node
+        env:
+          NODE_RUNTIME_TARGETS: ${{ matrix.target }}
+
+      - name: Stage hub bundle
+        run: npm run prepare:hub
+
+      - name: Tauri build (signed updater artifacts)
+        run: npm run tauri:build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_UPDATER_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_UPDATER_KEY_PASSWORD }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: hub-tray-${{ matrix.target }}
+          path: |
+            src-tauri/target/release/bundle/**/*.dmg
+            src-tauri/target/release/bundle/**/*.msi
+            src-tauri/target/release/bundle/**/*.zip
+            src-tauri/target/release/bundle/**/*.sig
+            src-tauri/target/release/bundle/**/*.app.tar.gz
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Build latest.json
+        run: node scripts/build-updater-manifest.mjs
+        env:
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          ARTIFACTS_DIR: ./artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/**/*.dmg
+            artifacts/**/*.msi
+            artifacts/**/*.zip
+            artifacts/**/*.app.tar.gz
+            artifacts/**/*.sig
+            latest.json
+          generate_release_notes: true

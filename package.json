@@ -1,0 +1,32 @@
+{
+  "name": "@nu/pos-hub-tray",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "version:sync": "node scripts/sync-version.mjs",
+    "prepare:node": "node scripts/fetch-node-runtime.mjs",
+    "prepare:hub": "node scripts/build-hub-bundle.mjs",
+    "prepare:all": "npm run prepare:node && npm run prepare:hub",
+    "dev": "vite",
+    "build": "vite build",
+    "tauri": "npm run version:sync && tauri",
+    "tauri:dev": "npm run version:sync && npm run prepare:all && tauri dev",
+    "tauri:build": "npm run version:sync && npm run prepare:all && tauri build"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.0.0",
+    "@tauri-apps/plugin-clipboard-manager": "^2.0.0",
+    "@tauri-apps/plugin-dialog": "^2.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "typescript": "^5.7.0",
+    "vite": "^6.0.0"
+  }
+}
