@@ -83,6 +83,14 @@ impl Supervisor {
             .stderr(Stdio::piped())
             .kill_on_drop(true);
 
+        // On Windows, suppress the console window that would otherwise pop
+        // up alongside node.exe. 0x08000000 = CREATE_NO_WINDOW.
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x08000000);
+        }
+
         let mut child = match cmd.spawn() {
             Ok(c) => c,
             Err(e) => {
