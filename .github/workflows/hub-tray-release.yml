@@ -26,7 +26,10 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Init submodule via SSH
-        run: git submodule update --init --recursive --depth 1
+        # Non-recursive on purpose: the monorepo has stray gitlinks under
+        # .claude/worktrees/* (committed in error) that aren't in .gitmodules.
+        # The tray only needs external/source itself.
+        run: git submodule update --init --depth 1 external/source
 
       - uses: actions/setup-node@v4
         with:
