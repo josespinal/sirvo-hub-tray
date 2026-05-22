@@ -26,7 +26,8 @@ const stagingRoot = resolve(trayRoot, "src-tauri/resources/hub");
 
 function sh(cmd, args, cwd) {
   console.log(`$ ${cmd} ${args.join(" ")}  (cwd=${cwd})`);
-  execFileSync(cmd, args, { cwd, stdio: "inherit" });
+  // shell:true on Windows so PATHEXT resolves .cmd shims (npm, tar, unzip).
+  execFileSync(cmd, args, { cwd, stdio: "inherit", shell: process.platform === "win32" });
 }
 
 console.log("[hub] cleaning staging dir");
