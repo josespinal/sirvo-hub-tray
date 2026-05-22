@@ -22,6 +22,17 @@ const HTTP_PORT: u16 = 8766;
 pub fn run() {
     env_logger::init();
     tauri::Builder::default()
+        // Must be registered FIRST per tauri-plugin-single-instance docs.
+        // When a second launch happens, focus the logs window if visible
+        // and exit the new process (avoids duplicate tray icons + port
+        // collisions on the bundled hub).
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            log::info!("second instance launched; focusing existing");
+            if let Some(win) = app.get_webview_window("logs") {
+                let _ = win.show();
+                let _ = win.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_autostart::init(

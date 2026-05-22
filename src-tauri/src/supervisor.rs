@@ -83,10 +83,28 @@ impl Supervisor {
             .stderr(Stdio::piped())
             .kill_on_drop(true);
 
-        let mut child = cmd.spawn().map_err(|e| anyhow!("spawn node: {e}"))?;
+        let mut child = match cmd.spawn() {
+            Ok(c) => c,
+            Err(e) => {
+                self.set_state(HubState::Errored);
+                return Err(anyhow!("spawn node: {e}"));
+            }
+        };
 
-        let stdout = child.stdout.take().ok_or_else(|| anyhow!("no stdout"))?;
-        let stderr = child.stderr.take().ok_or_else(|| anyhow!("no stderr"))?;
+        let stdout = match child.stdout.take() {
+            Some(s) => s,
+            None => {
+                self.set_state(HubState::Errored);
+                return Err(anyhow!("no stdout"));
+            }
+        };
+        let stderr = match child.stderr.take() {
+            Some(s) => s,
+            None => {
+                self.set_state(HubState::Errored);
+                return Err(anyhow!("no stderr"));
+            }
+        };
         spawn_reader(
             stdout,
             self.log_buffer.clone(),
