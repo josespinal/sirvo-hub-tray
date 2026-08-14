@@ -1,6 +1,6 @@
 [package]
 name = "nu_pos_hub_tray"
-version = "0.1.2"
+version = "0.2.0"
 description = "Sirvo POS Hub tray app"
 authors = ["Industria"]
 license = ""
