@@ -17,7 +17,15 @@ pub enum HubState {
     Running,
     Restarting,
     Errored,
+    /// No Odoo connection saved yet; the hub was not started.
+    NeedsSetup,
+    /// The hub exited with `EXIT_CONFIG_ERROR` (78): it refused its Odoo
+    /// settings. Restarting won't help until they are fixed.
+    ConfigError,
 }
+
+/// `EXIT_CONFIG_ERROR` in nu_pos_hub/src/config.ts.
+const EXIT_CONFIG_ERROR: i32 = 78;
 
 pub struct SupervisorConfig {
     pub node_binary: PathBuf,
@@ -69,6 +77,11 @@ impl Supervisor {
         if matches!(self.state(), HubState::Starting | HubState::Running) {
             return Ok(());
         }
+        let Some(odoo) = crate::odoo_conn::load_for_hub(&self.app) else {
+            // Starting without credentials would just fail; ask for them.
+            self.set_state(HubState::NeedsSetup);
+            return Ok(());
+        };
         self.set_state(HubState::Starting);
         self.intentional_stop.store(false, Ordering::SeqCst);
 
@@ -79,6 +92,10 @@ impl Supervisor {
             .env("HUB_HTTP_PORT", self.config.http_port.to_string())
             .env("HUB_ADMIN_PORT", self.config.admin_port.to_string())
             .env("HUB_DB_PATH", &self.config.db_path)
+            .env("ODOO_URL", &odoo.url)
+            .env("ODOO_DB", &odoo.db)
+            .env("ODOO_USER", &odoo.user)
+            .env("ODOO_PASSWORD", &odoo.password)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
@@ -162,6 +179,7 @@ impl Supervisor {
                         } else {
                             match status {
                                 Ok(s) if s.success() => HubState::Stopped,
+                                Ok(s) if s.code() == Some(EXIT_CONFIG_ERROR) => HubState::ConfigError,
                                 _ => HubState::Errored,
                             }
                         };

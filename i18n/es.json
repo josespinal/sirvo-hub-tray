@@ -19,7 +19,10 @@
     "languageEs": "Español",
     "languageAuto": "Predeterminado del sistema",
     "checkForUpdates": "Buscar actualizaciones",
-    "quit": "Salir"
+    "quit": "Salir",
+    "needsSetup": "Hub: Falta la conexión a Odoo",
+    "configError": "Hub: Odoo rechazó la configuración",
+    "odooConnection": "Conexión a Odoo…"
   },
   "dialog": {
     "stopTitle": "¿Detener el Hub?",
@@ -36,5 +39,36 @@
     "empty": "Aún no hay registros.",
     "clear": "Limpiar",
     "follow": "Seguir"
+  },
+  "setup": {
+    "title": "Conexión a Odoo",
+    "intro": "El hub envía las órdenes a Odoo con este usuario. Usa un usuario creado solo para este hub, no el de una persona ni admin.",
+    "url": "URL de Odoo",
+    "db": "Base de datos",
+    "user": "Usuario del hub",
+    "password": "Contraseña",
+    "passwordKeep": "Déjala vacía para conservar la contraseña guardada",
+    "userHint": "Agrega el usuario al grupo POS Hub Service para que los inicios de sesión sigan funcionando cuando no se pueda llegar a Odoo.",
+    "testAndSave": "Probar y guardar",
+    "testing": "Probando…",
+    "close": "Cerrar",
+    "saved": "Conectado. El hub se está reiniciando con esta configuración.",
+    "noHubGroup": "Este usuario no está en POS Hub Service: el hub funciona, pero los inicios de sesión se detienen cuando no se puede llegar a Odoo.",
+    "storedInKeychain": "La contraseña está guardada en el almacén de credenciales de esta computadora.",
+    "storedInFile": "El almacén de credenciales no está disponible, así que la contraseña se guardó en un archivo protegido que solo esta cuenta de usuario puede leer.",
+    "hubRefused": "El hub rechazó su configuración de Odoo:",
+    "errors": {
+      "invalidUrl": "Escribe la dirección completa, empezando con http:// o https://.",
+      "missingDb": "Escribe el nombre de la base de datos.",
+      "missingUser": "Escribe el usuario de Odoo del hub.",
+      "missingPassword": "Escribe la contraseña.",
+      "defaultPassword": "Esa contraseña es una conocida por defecto. El hub la rechaza; pon una contraseña fuerte a este usuario en Odoo.",
+      "unreachable": "No se pudo llegar a Odoo en esa dirección.",
+      "notOdoo": "Esa dirección respondió, pero no parece ser Odoo.",
+      "badLogin": "Odoo rechazó el usuario o la contraseña.",
+      "odooError": "Odoo devolvió un error (revisa el nombre de la base de datos).",
+      "storeFailed": "No se pudo guardar la configuración en esta computadora.",
+      "unknown": "Algo salió mal."
+    }
   }
 }

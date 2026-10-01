@@ -1,6 +1,7 @@
 mod commands;
 mod i18n;
 mod log_buffer;
+mod odoo_conn;
 mod paths;
 mod settings;
 mod status_client;
@@ -50,6 +51,9 @@ pub fn run() {
             commands::cmd_get_settings,
             commands::cmd_save_settings,
             commands::cmd_get_log_snapshot,
+            commands::cmd_get_odoo_conn,
+            commands::cmd_save_odoo_conn,
+            commands::cmd_get_config_error,
         ])
         .setup(|app| {
             let handle = app.handle().clone();

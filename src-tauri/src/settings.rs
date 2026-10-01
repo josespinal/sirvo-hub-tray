@@ -7,11 +7,23 @@ use tauri::{AppHandle, Manager};
 pub struct Settings {
     pub autostart: bool,
     pub language: Option<String>, // None = follow OS locale
+    /// Where the hub connects to Odoo. The password is not here: it lives in
+    /// the OS keychain (see `odoo_conn.rs`). None = not set up yet.
+    #[serde(default)]
+    pub odoo: Option<OdooConn>,
+}
+
+/// The non-secret half of the hub's Odoo connection.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OdooConn {
+    pub url: String,
+    pub db: String,
+    pub user: String,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { autostart: true, language: None }
+        Self { autostart: true, language: None, odoo: None }
     }
 }
 
