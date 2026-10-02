@@ -39,6 +39,8 @@ sys-locale = "0.3"
 # backend enabled explicitly — without one, keyring silently uses a mock store.
 [target.'cfg(target_os = "windows")'.dependencies]
 keyring = { version = "3", features = ["windows-native"] }
+# Kill the hub with the tray however the tray ends (crash, End task, updater).
+win32job = "2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3", features = ["apple-native"] }

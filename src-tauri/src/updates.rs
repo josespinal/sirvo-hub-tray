@@ -26,23 +26,19 @@ pub async fn check_now(app: &AppHandle) {
     };
 
     log::info!("downloading update {} silently", update.version);
-    let mut downloaded: u64 = 0;
-    if let Err(e) = update
-        .download_and_install(
-            |chunk_len, _content_len| {
-                downloaded += chunk_len as u64;
-            },
-            || log::info!("update downloaded; awaiting user confirmation"),
-        )
-        .await
-    {
-        log::warn!("update download failed: {e}");
-        return;
-    }
-    log::info!("update bytes downloaded: {downloaded}");
+    // Download only. Installing on Windows launches the MSI and exits this
+    // process at once (`std::process::exit(0)` inside the updater), so the
+    // hub must be stopped *before* `install`, or it is orphaned and keeps
+    // the hub's ports until someone kills it.
+    let bytes = match update.download(|_chunk, _total| {}, || log::info!("update downloaded; awaiting user confirmation")).await {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            log::warn!("update download failed: {e}");
+            return;
+        }
+    };
+    log::info!("update bytes downloaded: {}", bytes.len());
 
-    // After install, Tauri replaces the binary on next launch. We need to
-    // (1) stop the hub child, (2) ask the user, (3) restart the app.
     let lang = settings::load(app)
         .language
         .unwrap_or_else(|| detect_locale().to_string());
@@ -60,6 +56,13 @@ pub async fn check_now(app: &AppHandle) {
                 let a = app2.clone();
                 tauri::async_runtime::spawn(async move {
                     let _ = sup.stop().await;
+                    // Windows: runs the installer and exits. Elsewhere: swaps
+                    // the bundle, then we relaunch.
+                    if let Err(e) = update.install(&bytes) {
+                        log::warn!("update install failed: {e}");
+                        let _ = sup.start().await;
+                        return;
+                    }
                     a.restart();
                 });
             }

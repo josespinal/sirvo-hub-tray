@@ -49,6 +49,22 @@ pub struct Supervisor {
     log_buffer: LogBuffer,
     config: SupervisorConfig,
     app: AppHandle,
+    /// Windows: a job object that kills its processes when its last handle
+    /// closes — i.e. when the tray process ends, however it ends.
+    #[cfg(windows)]
+    job: Option<win32job::Job>,
+}
+
+/// `kill_on_drop` only covers a tray that exits normally. When Windows ends
+/// the tray (crash, Task Manager, the updater's `exit(0)`), the hub would
+/// live on holding its ports and every new hub would fail with EADDRINUSE.
+#[cfg(windows)]
+fn kill_on_close_job() -> Option<win32job::Job> {
+    let job = win32job::Job::create().map_err(|e| log::warn!("job object: {e}")).ok()?;
+    let mut info = job.query_extended_limit_info().map_err(|e| log::warn!("job object: {e}")).ok()?;
+    info.limit_kill_on_job_close();
+    job.set_extended_limit_info(&mut info).map_err(|e| log::warn!("job object: {e}")).ok()?;
+    Some(job)
 }
 
 impl Supervisor {
@@ -61,6 +77,8 @@ impl Supervisor {
             log_buffer,
             config,
             app,
+            #[cfg(windows)]
+            job: kill_on_close_job(),
         }
     }
 
@@ -121,6 +139,13 @@ impl Supervisor {
                 return Err(anyhow!("spawn node: {e}"));
             }
         };
+
+        #[cfg(windows)]
+        if let (Some(job), Some(handle)) = (&self.job, child.raw_handle()) {
+            if let Err(e) = job.assign_process(handle as isize) {
+                log::warn!("could not tie the hub to the tray's lifetime: {e}");
+            }
+        }
 
         let stdout = match child.stdout.take() {
             Some(s) => s,
