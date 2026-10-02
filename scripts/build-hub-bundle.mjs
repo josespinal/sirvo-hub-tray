@@ -34,6 +34,14 @@ console.log("[hub] cleaning staging dir");
 rmSync(stagingRoot, { recursive: true, force: true });
 mkdirSync(stagingRoot, { recursive: true });
 
+// The hub imports @nu/sync-protocol (file:../nu_pos_sync_protocol), whose
+// exports point at dist/ — so the protocol must be built before the hub can
+// compile. A fresh checkout (CI) has no dist/.
+console.log("[hub] building the sync protocol");
+const protoSource = resolve(sourceRoot, "nu_pos_sync_protocol");
+sh("npm", ["install"], protoSource);
+sh("npm", ["run", "build"], protoSource);
+
 console.log("[hub] building TypeScript");
 sh("npm", ["run", "build"], hubRoot);
 
