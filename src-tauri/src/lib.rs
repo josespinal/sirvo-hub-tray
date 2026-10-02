@@ -78,6 +78,7 @@ pub fn run() {
                 http_port: HTTP_PORT,
             };
             let supervisor = Arc::new(Supervisor::new(handle.clone(), cfg, log_buffer.clone()));
+            supervisor.spawn_auto_restart();
             let status_client = StatusClient::new(handle.clone(), ADMIN_PORT);
 
             handle.manage(AppState {
@@ -137,6 +138,15 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app, event| {
+            // A tray app outlives its windows: closing the logs or setup window
+            // (the last one open) asks to exit with `code: None` — refuse it, or
+            // the hub stops with the window. Quit and the updater's restart
+            // call exit/restart explicitly (`code: Some`) and still go through.
+            if let tauri::RunEvent::ExitRequested { code: None, api, .. } = event {
+                api.prevent_exit();
+            }
+        });
 }
