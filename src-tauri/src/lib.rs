@@ -78,6 +78,7 @@ pub fn run() {
                 http_port: HTTP_PORT,
             };
             let supervisor = Arc::new(Supervisor::new(handle.clone(), cfg, log_buffer.clone()));
+            supervisor.spawn_auto_restart();
             let status_client = StatusClient::new(handle.clone(), ADMIN_PORT);
 
             handle.manage(AppState {

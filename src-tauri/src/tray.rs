@@ -47,9 +47,20 @@ impl TrayController {
         let _ = self.rebuild_menu();
     }
 
+    /// Called every poll (3s). Rebuild the menu only when something it shows
+    /// changed: `uptime_sec` changes every time, and replacing the menu
+    /// while it is open closes it or makes it flicker on Windows.
     pub fn update_status(&self, status: HubStatus) {
-        *self.last_status.lock() = status;
-        let _ = self.rebuild_menu();
+        let shown = |s: &HubStatus| (s.connected_terminals, s.lan_url.clone());
+        let changed = {
+            let mut last = self.last_status.lock();
+            let changed = shown(&last) != shown(&status);
+            *last = status;
+            changed
+        };
+        if changed {
+            let _ = self.rebuild_menu();
+        }
     }
 
     pub fn update_state(&self, state: HubState) {
