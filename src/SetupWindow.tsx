@@ -6,7 +6,7 @@ import { t } from "./i18n.js";
 type Settings = { autostart: boolean; language: string | null };
 type Storage = "keychain" | "file";
 type OdooConn = { url: string; db: string; user: string };
-type ConnView = { conn: OdooConn | null; has_password: boolean; storage: Storage | null };
+type ConnView = { conn: OdooConn | null; has_password: boolean; has_waf_token: boolean; storage: Storage | null };
 type SaveOutcome = { storage: Storage; hub_service_group: boolean };
 type ConnError = { code: string; detail: string | null };
 
@@ -17,6 +17,9 @@ export default function SetupWindow() {
   const [db, setDb] = useState("");
   const [user, setUser] = useState("");
   const [password, setPassword] = useState("");
+  const [wafToken, setWafToken] = useState("");
+  const [hasWafToken, setHasWafToken] = useState(false);
+  const [removeWafToken, setRemoveWafToken] = useState(false);
   const [saved, setSaved] = useState<OdooConn | null>(null);
   const [hasPassword, setHasPassword] = useState(false);
   const [storage, setStorage] = useState<Storage | null>(null);
@@ -38,6 +41,7 @@ export default function SetupWindow() {
       }
       setSaved(view.conn);
       setHasPassword(view.has_password);
+      setHasWafToken(view.has_waf_token);
       setStorage(view.storage);
     });
     invoke<string | null>("cmd_get_config_error").then(setConfigError);
@@ -60,12 +64,20 @@ export default function SetupWindow() {
         db,
         user,
         password: password === "" ? null : password,
+        wafToken: removeWafToken
+          ? { action: "remove" }
+          : wafToken.trim() !== ""
+            ? { action: "set", value: wafToken }
+            : { action: "keep" },
       });
       setOutcome(result);
       setSaved({ url: url.trim().replace(/\/+$/, ""), db: db.trim(), user: user.trim() });
       setHasPassword(true);
       setStorage(result.storage);
       setPassword("");
+      setHasWafToken(!removeWafToken && (wafToken.trim() !== "" || (canKeepPassword && hasWafToken)));
+      setWafToken("");
+      setRemoveWafToken(false);
       setConfigError(null);
     } catch (err) {
       setError(typeof err === "object" && err !== null && "code" in err ? (err as ConnError) : { code: "unknown", detail: String(err) });
@@ -111,6 +123,25 @@ export default function SetupWindow() {
         />
       </label>
       <p style={styles.muted}>{t(lang, "setup.userHint")}</p>
+
+      <label style={styles.field}>
+        {t(lang, "setup.wafToken")}
+        <input
+          style={styles.input}
+          type="password"
+          value={wafToken}
+          onChange={(e) => setWafToken(e.target.value)}
+          placeholder={canKeepPassword && hasWafToken ? t(lang, "setup.wafTokenKeep") : t(lang, "setup.wafTokenOptional")}
+          autoComplete="off"
+          disabled={removeWafToken}
+        />
+      </label>
+      {canKeepPassword && hasWafToken ? (
+        <label style={styles.muted}>
+          <input type="checkbox" checked={removeWafToken} onChange={(e) => setRemoveWafToken(e.target.checked)} />{" "}
+          {t(lang, "setup.wafTokenRemove")}
+        </label>
+      ) : null}
 
       {error ? (
         <div style={{ ...styles.banner, ...styles.bad }}>

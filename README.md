@@ -52,12 +52,16 @@ The hub doesn't start until it has an Odoo connection. On first launch the
      can't be reached.
 2. In the window, enter the Odoo URL, database, that user and its password,
    then click **Test and save**.
+   - If Odoo is behind a WAF that requires an `x-api-token` header (it answers
+     403 without it), also fill in **WAF token**. The tray sends it on the
+     test, and the hub sends it on every request to Odoo (`ODOO_RPC_HEADERS`;
+     needs a bundled hub that includes rost_pos_restaurant#172 or later).
    - Nothing is saved unless Odoo accepts the login.
    - The hub then restarts with the new settings.
 
 **Where the settings are kept:**
 - URL, database and user: `settings.json`, in the app config folder.
-- Password: the OS credential store (Windows Credential Manager, macOS
+- Password and WAF token: the OS credential store (Windows Credential Manager, macOS
   Keychain, Linux Secret Service). Where that isn't available, it goes in an
   `odoo-secret` file that only this OS user can read, and the window says so.
 

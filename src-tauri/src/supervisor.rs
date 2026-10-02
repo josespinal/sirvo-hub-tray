@@ -96,6 +96,12 @@ impl Supervisor {
             .env("ODOO_DB", &odoo.db)
             .env("ODOO_USER", &odoo.user)
             .env("ODOO_PASSWORD", &odoo.password)
+            // Every request the hub makes to Odoo carries it (needs hub
+            // v0.15+; older hubs send it on XML-RPC only).
+            .env(
+                "ODOO_RPC_HEADERS",
+                odoo.waf_token.as_deref().map(|t| format!("{}:{t}", crate::odoo_conn::WAF_HEADER)).unwrap_or_default(),
+            )
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
