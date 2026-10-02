@@ -33,8 +33,9 @@
     "active": true,
     "createUpdaterArtifacts": true,
     "targets": [
-      "msi",
-      "dmg"
+      "app",
+      "dmg",
+      "msi"
     ],
     "icon": [
       "icons/32x32.png",
