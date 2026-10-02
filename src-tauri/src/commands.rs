@@ -1,5 +1,5 @@
 use crate::log_buffer::LogBuffer;
-use crate::odoo_conn::{self, ConnError, ConnView, SaveOutcome};
+use crate::odoo_conn::{self, ConnError, ConnView, SaveOutcome, WafTokenChange};
 use crate::settings::{self, Settings};
 use crate::status_client::{HubStatus, StatusClient};
 use crate::supervisor::{HubState, Supervisor};
@@ -56,7 +56,8 @@ pub fn cmd_get_odoo_conn(app: AppHandle) -> ConnView {
 }
 
 /// Test the connection against Odoo, save it, then (re)start the hub with it.
-/// `password: None` or empty keeps the stored password.
+/// `password: None` or empty keeps the stored password; `waf_token` says
+/// whether to keep, set or remove the stored WAF token.
 #[tauri::command]
 pub async fn cmd_save_odoo_conn(
     app: AppHandle,
@@ -65,8 +66,9 @@ pub async fn cmd_save_odoo_conn(
     db: String,
     user: String,
     password: Option<String>,
+    waf_token: WafTokenChange,
 ) -> Result<SaveOutcome, ConnError> {
-    let outcome = odoo_conn::test_and_save(&app, &url, &db, &user, password).await?;
+    let outcome = odoo_conn::test_and_save(&app, &url, &db, &user, password, waf_token).await?;
     let supervisor = state.supervisor.clone();
     let restart = matches!(supervisor.state(), HubState::Running | HubState::Starting);
     tauri::async_runtime::spawn(async move {

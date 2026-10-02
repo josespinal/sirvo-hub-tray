@@ -68,7 +68,14 @@
       "badLogin": "Odoo rechazó el usuario o la contraseña.",
       "odooError": "Odoo devolvió un error (revisa el nombre de la base de datos).",
       "storeFailed": "No se pudo guardar la configuración en esta computadora.",
-      "unknown": "Algo salió mal."
-    }
+      "unknown": "Algo salió mal.",
+      "invalidWafToken": "El token del WAF no puede tener espacios ni comas.",
+      "wafBlocked": "El firewall de Odoo bloqueó la solicitud. Si pide un token, escríbelo en \"Token del WAF\".",
+      "wafRejected": "El firewall de Odoo rechazó la solicitud. Revisa el token del WAF."
+    },
+    "wafToken": "Token del WAF (x-api-token)",
+    "wafTokenOptional": "Solo si Odoo está detrás de un firewall que lo pide",
+    "wafTokenKeep": "Déjalo vacío para conservar el token guardado",
+    "wafTokenRemove": "Quitar el token guardado"
   }
 }

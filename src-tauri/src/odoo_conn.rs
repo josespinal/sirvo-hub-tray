@@ -22,6 +22,8 @@ const WELL_KNOWN_PASSWORDS: &[&str] = &["admin"];
 const HUB_SERVICE_GROUP: &str = "nu_restaurant_pos.group_pos_hub_service";
 const ADMIN_GROUP: &str = "base.group_system";
 const ODOO_TIMEOUT: Duration = Duration::from_secs(10);
+/// The header the WAF in front of Odoo checks.
+pub const WAF_HEADER: &str = "x-api-token";
 
 /// Where the password ended up.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -37,6 +39,8 @@ pub struct HubCredentials {
     pub db: String,
     pub user: String,
     pub password: String,
+    /// Sent as `x-api-token` on every request to Odoo (`ODOO_RPC_HEADERS`).
+    pub waf_token: Option<String>,
 }
 
 /// A failure the setup form shows. `code` maps to `setup.errors.<code>` in
@@ -69,6 +73,7 @@ pub struct SaveOutcome {
 pub struct ConnView {
     pub conn: Option<OdooConn>,
     pub has_password: bool,
+    pub has_waf_token: bool,
     pub storage: Option<Storage>,
 }
 
@@ -96,6 +101,16 @@ pub fn normalize(url: &str, db: &str, user: &str) -> Result<OdooConn, ConnError>
     Ok(OdooConn { url, db, user })
 }
 
+/// The hub reads `ODOO_RPC_HEADERS` as `Key:Value,Key2:Value2`, so a comma
+/// would split the token; whitespace and control characters can't go in a
+/// header at all.
+pub fn check_waf_token(token: &str) -> Result<(), ConnError> {
+    if token.chars().any(|c| c == ',' || c.is_whitespace() || c.is_control()) {
+        return Err(ConnError::new("invalidWafToken"));
+    }
+    Ok(())
+}
+
 pub fn check_password(password: &str) -> Result<(), ConnError> {
     if password.is_empty() {
         return Err(ConnError::new("missingPassword"));
@@ -106,12 +121,29 @@ pub fn check_password(password: &str) -> Result<(), ConnError> {
     Ok(())
 }
 
-// ─── Password storage ───────────────────────────────────────────────────────
+// ─── Secret storage ─────────────────────────────────────────────────────────
+
+/// What is kept secret per account: the password and the optional WAF token.
+/// Stored as one JSON value, in the keychain or the fallback file.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct Secrets {
+    password: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    waf_token: Option<String>,
+}
+
+impl Secrets {
+    /// Tray 0.3.0–0.3.1 stored the bare password in the keychain.
+    fn parse(raw: &str) -> Self {
+        serde_json::from_str(raw).unwrap_or_else(|_| Self { password: raw.to_string(), waf_token: None })
+    }
+}
 
 #[derive(Serialize, Deserialize)]
 struct SecretFile {
     account: String,
-    password: String,
+    #[serde(flatten)]
+    secrets: Secrets,
 }
 
 fn secret_file_path(app: &AppHandle) -> PathBuf {
@@ -143,9 +175,10 @@ fn write_secret_file(path: &PathBuf, contents: &str) -> std::io::Result<()> {
     file.write_all(contents.as_bytes())
 }
 
-fn store_password(app: &AppHandle, conn: &OdooConn, password: &str) -> Result<Storage, ConnError> {
+fn store_secrets(app: &AppHandle, conn: &OdooConn, secrets: &Secrets) -> Result<Storage, ConnError> {
     let path = secret_file_path(app);
-    match keyring_entry(conn).and_then(|e| e.set_password(password)) {
+    let value = serde_json::to_string(secrets).map_err(|e| ConnError::with("storeFailed", e))?;
+    match keyring_entry(conn).and_then(|e| e.set_password(&value)) {
         Ok(()) => {
             // A fallback copy from an earlier save would outlive a password
             // change; the keychain is now the only copy.
@@ -154,7 +187,7 @@ fn store_password(app: &AppHandle, conn: &OdooConn, password: &str) -> Result<St
         }
         Err(err) => {
             log::warn!("keychain unavailable ({err}); storing the Odoo password in {}", path.display());
-            let body = serde_json::to_string(&SecretFile { account: account(conn), password: password.to_string() })
+            let body = serde_json::to_string(&SecretFile { account: account(conn), secrets: secrets.clone() })
                 .map_err(|e| ConnError::with("storeFailed", e))?;
             write_secret_file(&path, &body).map_err(|e| ConnError::with("storeFailed", e))?;
             Ok(Storage::File)
@@ -162,34 +195,49 @@ fn store_password(app: &AppHandle, conn: &OdooConn, password: &str) -> Result<St
     }
 }
 
-/// The stored password for `conn`, and where it came from. A fallback file
+/// The stored secrets for `conn`, and where they came from. A fallback file
 /// written for another server, database or user is ignored.
-fn load_password(app: &AppHandle, conn: &OdooConn) -> Option<(String, Storage)> {
+fn load_secrets(app: &AppHandle, conn: &OdooConn) -> Option<(Secrets, Storage)> {
     match keyring_entry(conn).and_then(|e| e.get_password()) {
-        Ok(password) => return Some((password, Storage::Keychain)),
+        Ok(raw) => return Some((Secrets::parse(&raw), Storage::Keychain)),
         Err(keyring::Error::NoEntry) => {}
         Err(err) => log::warn!("keychain read failed ({err}); trying the fallback file"),
     }
     let raw = std::fs::read_to_string(secret_file_path(app)).ok()?;
     let file: SecretFile = serde_json::from_str(&raw).ok()?;
-    (file.account == account(conn)).then_some((file.password, Storage::File))
+    (file.account == account(conn)).then_some((file.secrets, Storage::File))
 }
 
 // ─── Odoo ───────────────────────────────────────────────────────────────────
 
-async fn jsonrpc(client: &reqwest::Client, url: &str, service: &str, method: &str, args: serde_json::Value) -> Result<serde_json::Value, ConnError> {
+async fn jsonrpc(
+    client: &reqwest::Client,
+    url: &str,
+    waf_token: Option<&str>,
+    service: &str,
+    method: &str,
+    args: serde_json::Value,
+) -> Result<serde_json::Value, ConnError> {
     let body = serde_json::json!({
         "jsonrpc": "2.0",
         "method": "call",
         "params": { "service": service, "method": method, "args": args },
         "id": 1,
     });
-    let response = client
-        .post(format!("{url}/jsonrpc"))
-        .json(&body)
+    let mut request = client.post(format!("{url}/jsonrpc")).json(&body);
+    if let Some(token) = waf_token {
+        request = request.header(WAF_HEADER, token);
+    }
+    let response = request
         .send()
         .await
         .map_err(|e| ConnError::with("unreachable", e))?;
+    // Odoo itself answers RPC errors with 200; a 401/403 comes from the WAF
+    // (or a proxy) in front of it.
+    if matches!(response.status().as_u16(), 401 | 403) {
+        let code = if waf_token.is_some() { "wafRejected" } else { "wafBlocked" };
+        return Err(ConnError::with(code, format!("HTTP {}", response.status())));
+    }
     if !response.status().is_success() {
         return Err(ConnError::with("unreachable", format!("HTTP {}", response.status())));
     }
@@ -208,12 +256,12 @@ async fn jsonrpc(client: &reqwest::Client, url: &str, service: &str, method: &st
 /// Log in the way the hub does (JSON-RPC, user + password) and check the
 /// offline-login group. Returns whether the user can read the offline-login
 /// data (POS Hub Service or admin).
-pub async fn test_login(conn: &OdooConn, password: &str) -> Result<bool, ConnError> {
+pub async fn test_login(conn: &OdooConn, password: &str, waf_token: Option<&str>) -> Result<bool, ConnError> {
     let client = reqwest::Client::builder()
         .timeout(ODOO_TIMEOUT)
         .build()
         .map_err(|e| ConnError::with("unreachable", e))?;
-    let uid = jsonrpc(&client, &conn.url, "common", "login", serde_json::json!([conn.db, conn.user, password])).await?;
+    let uid = jsonrpc(&client, &conn.url, waf_token, "common", "login", serde_json::json!([conn.db, conn.user, password])).await?;
     let Some(uid) = uid.as_i64().filter(|uid| *uid > 0) else {
         return Err(ConnError::new("badLogin"));
     };
@@ -221,6 +269,7 @@ pub async fn test_login(conn: &OdooConn, password: &str) -> Result<bool, ConnErr
         let has = jsonrpc(
             &client,
             &conn.url,
+            waf_token,
             "object",
             "execute_kw",
             serde_json::json!([conn.db, uid, password, "res.users", "has_group", [group]]),
@@ -237,37 +286,65 @@ pub async fn test_login(conn: &OdooConn, password: &str) -> Result<bool, ConnErr
 
 pub fn view(app: &AppHandle) -> ConnView {
     let conn = settings::load(app).odoo;
-    let stored = conn.as_ref().and_then(|c| load_password(app, c));
+    let stored = conn.as_ref().and_then(|c| load_secrets(app, c));
     ConnView {
         has_password: stored.is_some(),
+        has_waf_token: stored.as_ref().is_some_and(|(s, _)| s.waf_token.is_some()),
         storage: stored.map(|(_, storage)| storage),
         conn,
     }
 }
 
+/// What to do with the WAF token on save.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "action", content = "value", rename_all = "lowercase")]
+pub enum WafTokenChange {
+    /// Keep the stored token (or none).
+    Keep,
+    Set(String),
+    Remove,
+}
+
 /// Test the connection, then save it. Nothing is stored unless Odoo accepted
-/// the login. `password: None` keeps the stored one — only allowed while the
-/// server, database and user are unchanged, since it is stored per account.
-pub async fn test_and_save(app: &AppHandle, url: &str, db: &str, user: &str, password: Option<String>) -> Result<SaveOutcome, ConnError> {
+/// the login. `password: None` keeps the stored one, and `WafTokenChange::Keep`
+/// the stored token — only while the server, database and user are unchanged,
+/// since secrets are stored per account.
+pub async fn test_and_save(
+    app: &AppHandle,
+    url: &str,
+    db: &str,
+    user: &str,
+    password: Option<String>,
+    waf_token: WafTokenChange,
+) -> Result<SaveOutcome, ConnError> {
     let conn = normalize(url, db, user)?;
     let previous = settings::load(app).odoo;
+    let stored = load_secrets(app, &conn).map(|(s, _)| s);
     let password = match password.filter(|p| !p.is_empty()) {
         Some(p) => p,
-        None => match load_password(app, &conn) {
-            Some((p, _)) => p,
+        None => match &stored {
+            Some(s) => s.password.clone(),
             None => return Err(ConnError::new("missingPassword")),
         },
     };
     check_password(&password)?;
+    let waf_token = match waf_token {
+        WafTokenChange::Keep => stored.and_then(|s| s.waf_token),
+        WafTokenChange::Remove => None,
+        WafTokenChange::Set(t) => Some(t.trim().to_string()).filter(|t| !t.is_empty()),
+    };
+    if let Some(token) = &waf_token {
+        check_waf_token(token)?;
+    }
 
-    let hub_service_group = test_login(&conn, &password).await?;
-    let storage = store_password(app, &conn, &password)?;
+    let hub_service_group = test_login(&conn, &password, waf_token.as_deref()).await?;
+    let storage = store_secrets(app, &conn, &Secrets { password, waf_token })?;
 
     let mut s = settings::load(app);
     s.odoo = Some(conn.clone());
     settings::save(app, &s).map_err(|e| ConnError::with("storeFailed", e))?;
 
-    // The old account's password would otherwise stay in the keychain.
+    // The old account's secrets would otherwise stay in the keychain.
     if let Some(old) = previous.filter(|old| *old != conn) {
         if let Ok(entry) = keyring_entry(&old) {
             let _ = entry.delete_credential();
@@ -280,8 +357,14 @@ pub async fn test_and_save(app: &AppHandle, url: &str, db: &str, user: &str, pas
 /// is gone from the keychain): the hub must not start.
 pub fn load_for_hub(app: &AppHandle) -> Option<HubCredentials> {
     let conn = settings::load(app).odoo?;
-    let (password, _) = load_password(app, &conn)?;
-    Some(HubCredentials { url: conn.url, db: conn.db, user: conn.user, password })
+    let (secrets, _) = load_secrets(app, &conn)?;
+    Some(HubCredentials {
+        url: conn.url,
+        db: conn.db,
+        user: conn.user,
+        password: secrets.password,
+        waf_token: secrets.waf_token,
+    })
 }
 
 #[cfg(test)]
@@ -308,6 +391,30 @@ mod tests {
         assert_eq!(check_password("admin").unwrap_err().code, "defaultPassword");
         assert_eq!(check_password("ADMIN").unwrap_err().code, "defaultPassword");
         assert!(check_password("a-long-random-password").is_ok());
+    }
+
+    #[test]
+    fn rejects_waf_tokens_that_cannot_travel_in_odoo_rpc_headers() {
+        assert!(check_waf_token("abc123_-.~+/=").is_ok());
+        for bad in ["a,b", "a b", "a\nb"] {
+            assert_eq!(check_waf_token(bad).unwrap_err().code, "invalidWafToken");
+        }
+    }
+
+    #[test]
+    fn reads_secrets_stored_by_older_trays_as_a_bare_password() {
+        assert_eq!(Secrets::parse("hunter2-long"), Secrets { password: "hunter2-long".into(), waf_token: None });
+        let json = r#"{"password":"p","waf_token":"t"}"#;
+        assert_eq!(Secrets::parse(json), Secrets { password: "p".into(), waf_token: Some("t".into()) });
+    }
+
+    #[test]
+    fn fallback_file_keeps_the_account_next_to_the_secrets() {
+        let file = SecretFile { account: "a".into(), secrets: Secrets { password: "p".into(), waf_token: Some("t".into()) } };
+        let json = serde_json::to_string(&file).unwrap();
+        assert_eq!(json, r#"{"account":"a","password":"p","waf_token":"t"}"#);
+        let back: SecretFile = serde_json::from_str(r#"{"account":"a","password":"p"}"#).unwrap();
+        assert_eq!(back.secrets.waf_token, None);
     }
 
     #[test]
