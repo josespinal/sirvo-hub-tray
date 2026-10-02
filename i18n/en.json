@@ -19,7 +19,10 @@
     "languageEs": "Español",
     "languageAuto": "System default",
     "checkForUpdates": "Check for Updates",
-    "quit": "Quit"
+    "quit": "Quit",
+    "needsSetup": "Hub: Needs Odoo connection",
+    "configError": "Hub: Odoo settings refused",
+    "odooConnection": "Connection to Odoo…"
   },
   "dialog": {
     "stopTitle": "Stop the Hub?",
@@ -36,5 +39,36 @@
     "empty": "No log output yet.",
     "clear": "Clear",
     "follow": "Follow"
+  },
+  "setup": {
+    "title": "Connection to Odoo",
+    "intro": "The hub sends orders to Odoo as this user. Use a user created only for this hub, not a person's login or admin.",
+    "url": "Odoo URL",
+    "db": "Database",
+    "user": "Hub user",
+    "password": "Password",
+    "passwordKeep": "Leave blank to keep the saved password",
+    "userHint": "Add the user to the POS Hub Service group so logins keep working when Odoo can't be reached.",
+    "testAndSave": "Test and save",
+    "testing": "Testing…",
+    "close": "Close",
+    "saved": "Connected. The hub is restarting with these settings.",
+    "noHubGroup": "This user isn't in POS Hub Service: the hub works, but logins stop when Odoo can't be reached.",
+    "storedInKeychain": "The password is saved in this computer's credential store.",
+    "storedInFile": "The credential store isn't available, so the password is saved in a protected file only this user account can read.",
+    "hubRefused": "The hub refused its Odoo settings:",
+    "errors": {
+      "invalidUrl": "Enter the full address, starting with http:// or https://.",
+      "missingDb": "Enter the database name.",
+      "missingUser": "Enter the hub's Odoo user.",
+      "missingPassword": "Enter the password.",
+      "defaultPassword": "That password is a well-known default. The hub refuses it; set a strong password for this user in Odoo.",
+      "unreachable": "Couldn't reach Odoo at that address.",
+      "notOdoo": "That address answered, but it doesn't look like Odoo.",
+      "badLogin": "Odoo rejected the user or password.",
+      "odooError": "Odoo returned an error (check the database name).",
+      "storeFailed": "Couldn't save the settings on this computer.",
+      "unknown": "Something went wrong."
+    }
   }
 }

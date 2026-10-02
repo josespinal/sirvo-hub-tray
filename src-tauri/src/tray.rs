@@ -18,7 +18,7 @@ fn icon_for(state: HubState, app: &AppHandle) -> Option<Image<'static>> {
     let resource = app.path().resource_dir().ok()?;
     let file = match state {
         HubState::Running => "icons/tray-running.png",
-        HubState::Errored => "icons/tray-error.png",
+        HubState::Errored | HubState::NeedsSetup | HubState::ConfigError => "icons/tray-error.png",
         _ => "icons/tray-stopped.png",
     };
     Image::from_path(resource.join(file)).ok()
@@ -53,7 +53,12 @@ impl TrayController {
     }
 
     pub fn update_state(&self, state: HubState) {
-        *self.last_state.lock() = state;
+        let previous = std::mem::replace(&mut *self.last_state.lock(), state);
+        // The hub can't run until the Odoo connection is fixed: put the form
+        // in front of whoever is setting the machine up.
+        if state != previous && matches!(state, HubState::NeedsSetup | HubState::ConfigError) {
+            open_setup_window(&self.app, &self.lang.lock());
+        }
         if let Some(tray) = self.app.tray_by_id("main") {
             if let Some(img) = icon_for(state, &self.app) {
                 let _ = tray.set_icon(Some(img));
@@ -70,6 +75,8 @@ impl TrayController {
             HubState::Starting => t(&lang, "tray.starting"),
             HubState::Restarting => t(&lang, "tray.restarting"),
             HubState::Errored => t(&lang, "tray.errored"),
+            HubState::NeedsSetup => t(&lang, "tray.needsSetup"),
+            HubState::ConfigError => t(&lang, "tray.configError"),
         }
     }
 
@@ -92,9 +99,10 @@ impl TrayController {
         let terms    = MenuItem::with_id(&self.app, "terms",     terminals_label,    false, None::<&str>)?;
         let lan      = MenuItem::with_id(&self.app, "lan",       lan_label,          false, None::<&str>)?;
         let copy_lan = MenuItem::with_id(&self.app, "copy_lan",  t(&lang, "tray.copyLanUrl"), status.lan_url.is_some(), None::<&str>)?;
-        let start    = MenuItem::with_id(&self.app, "start",     t(&lang, "tray.start"),    matches!(state, HubState::Stopped | HubState::Errored), None::<&str>)?;
+        let start    = MenuItem::with_id(&self.app, "start",     t(&lang, "tray.start"),    matches!(state, HubState::Stopped | HubState::Errored | HubState::NeedsSetup | HubState::ConfigError), None::<&str>)?;
         let restart  = MenuItem::with_id(&self.app, "restart",   t(&lang, "tray.restart"),  matches!(state, HubState::Running), None::<&str>)?;
         let stop     = MenuItem::with_id(&self.app, "stop",      t(&lang, "tray.stop"),     matches!(state, HubState::Running), None::<&str>)?;
+        let odoo     = MenuItem::with_id(&self.app, "odoo",      t(&lang, "tray.odooConnection"), true, None::<&str>)?;
         let logs     = MenuItem::with_id(&self.app, "logs",      t(&lang, "tray.viewLogs"), true, None::<&str>)?;
 
         let settings_now = settings::load(&self.app);
@@ -121,6 +129,7 @@ impl TrayController {
                 &restart,
                 &stop,
                 &PredefinedMenuItem::separator(&self.app)?,
+                &odoo,
                 &logs,
                 &autostart,
                 &lang_sub,
@@ -194,6 +203,7 @@ fn handle_menu_event(app: &AppHandle, id: &str, ctrl: &TrayController) {
                 let _ = app.clipboard().write_text(url);
             }
         }
+        "odoo" => open_setup_window(app, &ctrl.lang.lock()),
         "logs" => {
             if let Some(win) = app.get_webview_window("logs") {
                 let _ = win.show();
@@ -249,6 +259,21 @@ fn handle_menu_event(app: &AppHandle, id: &str, ctrl: &TrayController) {
         }
         _ => {}
     }
+}
+
+/// Show the "Connection to Odoo" form (`SetupWindow.tsx`), creating it on
+/// first use.
+pub fn open_setup_window(app: &AppHandle, lang: &str) {
+    if let Some(win) = app.get_webview_window("setup") {
+        let _ = win.show();
+        let _ = win.set_focus();
+        return;
+    }
+    let _ = WebviewWindowBuilder::new(app, "setup", WebviewUrl::default())
+        .title(t(lang, "setup.title"))
+        .inner_size(520.0, 600.0)
+        .resizable(false)
+        .build();
 }
 
 async fn apply_autostart(app: &AppHandle, enable: bool) {

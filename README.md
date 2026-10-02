@@ -40,6 +40,34 @@ https://github.com/josespinal/sirvo-hub-tray/releases
 Signing/notarization is deferred — v1 ships unsigned. The auto-update channel
 will deliver a signed build transparently once available.
 
+### Connect it to Odoo
+
+The hub doesn't start until it has an Odoo connection. On first launch the
+**Connection to Odoo** window opens; it is also in the tray menu.
+
+1. In Odoo, create a user for this hub only (for example `hub-barilo`):
+   - give it a long random password, not `admin`, which the hub refuses;
+   - give it the POS rights;
+   - add it to **POS Hub Service**, so terminals can still log in while Odoo
+     can't be reached.
+2. In the window, enter the Odoo URL, database, that user and its password,
+   then click **Test and save**.
+   - Nothing is saved unless Odoo accepts the login.
+   - The hub then restarts with the new settings.
+
+**Where the settings are kept:**
+- URL, database and user: `settings.json`, in the app config folder.
+- Password: the OS credential store (Windows Credential Manager, macOS
+  Keychain, Linux Secret Service). Where that isn't available, it goes in an
+  `odoo-secret` file that only this OS user can read, and the window says so.
+
+**To cut off a hub,** archive its user in Odoo.
+
+If the hub refuses its settings (exit code 78), the tray shows "Odoo settings
+refused" and reopens the window with the hub's reason.
+
+See [docs/spec_odoo_credentials.md](docs/spec_odoo_credentials.md).
+
 ## Uninstall
 
 ### Windows

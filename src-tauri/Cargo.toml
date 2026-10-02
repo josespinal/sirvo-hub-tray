@@ -34,3 +34,14 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "serd
 log = "0.4"
 env_logger = "0.11"
 sys-locale = "0.3"
+
+# Odoo password storage (see docs/spec_odoo_credentials.md). Each OS needs its
+# backend enabled explicitly — without one, keyring silently uses a mock store.
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", features = ["sync-secret-service", "crypto-rust", "vendored"] }
