@@ -17,7 +17,8 @@ if (!refName || !repo) {
   throw new Error("GITHUB_REF_NAME and GITHUB_REPOSITORY are required");
 }
 
-const version = refName.replace(/^hub-tray-v/, "");
+// Tags are "v1.2.3" (older ones "hub-tray-v1.2.3"); latest.json wants plain semver.
+const version = refName.replace(/^(hub-tray-)?v/, "");
 
 function walk(dir, out = []) {
   for (const entry of readdirSync(dir)) {
@@ -41,7 +42,9 @@ for (const sig of sigs) {
   if (!platform) continue;
   const signature = readFileSync(sig, "utf8").trim();
   platforms[platform] = {
-    url: `https://github.com/${repo}/releases/download/${refName}/${basename(sig.replace(/\.sig$/, ""))}`,
+    // GitHub stores release assets with spaces turned into dots
+    // ("Sirvo Hub.app.tar.gz" -> "Sirvo.Hub.app.tar.gz"); link the stored name.
+    url: `https://github.com/${repo}/releases/download/${refName}/${basename(sig.replace(/\.sig$/, "")).replace(/ /g, ".")}`,
     signature,
   };
 }
