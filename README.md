@@ -85,6 +85,8 @@ opens it in the default editor.
 - The tray always sets `HUB_PORT`, `HUB_HTTP_PORT`, `HUB_ADMIN_PORT`,
   `HUB_DB_PATH`, the `ODOO_*` connection values and `FISCAL_PLUGIN=dr-ncf`
   itself. The file cannot override them; the log says when a line was ignored.
+- It may hold secrets (backup credentials), so on macOS/Linux the tray keeps it
+  readable by your user only (0600), and tightens it again on every start.
 
 ## Uninstall
 

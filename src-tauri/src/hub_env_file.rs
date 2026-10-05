@@ -104,8 +104,39 @@ pub fn merge(
     (env, warnings)
 }
 
-/// Read and parse `path`. A missing file is no extra settings.
+/// Owner-only (0600) on Unix: the file may hold secrets such as backup
+/// credentials, like `odoo-secret`. On Windows the app data folder is already
+/// private to the user.
+fn restrict_to_owner(path: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(path)?.permissions().mode();
+        if mode & 0o077 != 0 {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+    Ok(())
+}
+
+/// Read and parse `path`. A missing file is no extra settings. A file other
+/// users can read is tightened first: editors that save by replacing the file
+/// bring back the umask's permissions.
 pub fn load(path: &Path) -> (Vec<(String, String)>, Vec<String>) {
+    let mut tighten_warning = None;
+    if path.exists() {
+        if let Err(e) = restrict_to_owner(path) {
+            tighten_warning = Some(format!("hub.env permissions could not be restricted ({e})"));
+        }
+    }
+    let (vars, mut warnings) = load_contents(path);
+    warnings.extend(tighten_warning);
+    (vars, warnings)
+}
+
+fn load_contents(path: &Path) -> (Vec<(String, String)>, Vec<String>) {
     match std::fs::read_to_string(path) {
         Ok(contents) => parse(&contents),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => (Vec::new(), Vec::new()),
@@ -113,7 +144,8 @@ pub fn load(path: &Path) -> (Vec<(String, String)>, Vec<String>) {
     }
 }
 
-/// Create `path` with the commented template unless it already exists.
+/// Create `path` (owner-only) with the commented template unless it already
+/// exists.
 pub fn ensure_exists(path: &Path) -> std::io::Result<()> {
     if path.exists() {
         return Ok(());
@@ -121,7 +153,15 @@ pub fn ensure_exists(path: &Path) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    std::fs::write(path, TEMPLATE)
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path)?;
+    std::io::Write::write_all(&mut file, TEMPLATE.as_bytes())
 }
 
 #[cfg(test)]
@@ -205,6 +245,39 @@ mod tests {
         ];
         let (env, _) = merge(file, &[]);
         assert_eq!(env, vec![("HUB_LOG_LEVEL".to_string(), "debug".to_string())]);
+    }
+
+    // hub.env may hold secrets (backup credentials): owner-only, like
+    // odoo-secret. Editors that save by replacing the file can bring back
+    // the umask's 0644, so every load tightens it again.
+    #[cfg(unix)]
+    #[test]
+    fn ensure_exists_creates_the_file_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("hub-env-perm-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("hub.env");
+        ensure_exists(&path).unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_tightens_a_readable_file_to_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("hub-env-tighten-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("hub.env");
+        std::fs::write(&path, "AWS_SECRET_ACCESS_KEY=x\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let (vars, _) = load(&path);
+        assert_eq!(vars.len(), 1);
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
