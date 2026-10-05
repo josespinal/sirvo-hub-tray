@@ -50,6 +50,8 @@ pub struct SupervisorConfig {
     pub admin_port: u16,
     pub ws_port: u16,
     pub http_port: u16,
+    /// Extra hub environment (see `hub_env_file`), read on every start.
+    pub hub_env_file: PathBuf,
 }
 
 /// The hub's environment. Set explicitly so a value inherited from the
@@ -78,6 +80,18 @@ fn hub_env(config: &SupervisorConfig, odoo: &crate::odoo_conn::HubCredentials) -
         // to "none" (older hubs) or refuses to start (rost_pos_restaurant#181).
         ("FISCAL_PLUGIN", "dr-ncf".to_string()),
     ]
+}
+
+/// The hub's full environment: `hub.env` plus the managed values, which win.
+/// Returns the warnings about the file's unusable or ignored lines.
+fn spawn_env(
+    config: &SupervisorConfig,
+    odoo: &crate::odoo_conn::HubCredentials,
+) -> (Vec<(String, String)>, Vec<String>) {
+    let (file, mut warnings) = crate::hub_env_file::load(&config.hub_env_file);
+    let (env, merge_warnings) = crate::hub_env_file::merge(file, &hub_env(config, odoo));
+    warnings.extend(merge_warnings);
+    (env, warnings)
 }
 
 pub struct Supervisor {
@@ -170,10 +184,16 @@ impl Supervisor {
         self.set_state(HubState::Starting);
         self.intentional_stop.store(false, Ordering::SeqCst);
 
+        let (env, env_warnings) = spawn_env(&self.config, &odoo);
+        for warning in env_warnings {
+            log::warn!("{warning}");
+            self.log_buffer.push(format!("[tray] {warning}"));
+        }
+
         let mut cmd = Command::new(&self.config.node_binary);
         cmd.arg(&self.config.hub_entry)
             .current_dir(&self.config.hub_dir)
-            .envs(hub_env(&self.config, &odoo))
+            .envs(env)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
@@ -416,6 +436,7 @@ mod tests {
             admin_port: 8767,
             ws_port: 8765,
             http_port: 8766,
+            hub_env_file: PathBuf::from("hub.env"),
         }
     }
 
@@ -457,6 +478,37 @@ mod tests {
             env_value(&env, "ODOO_RPC_HEADERS"),
             Some(format!("{}:tok", crate::odoo_conn::WAF_HEADER).as_str())
         );
+    }
+
+    #[test]
+    fn spawn_env_adds_hub_env_file_values_but_keeps_the_managed_ones() {
+        let dir = std::env::temp_dir().join(format!("tray-spawn-env-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut config = test_config();
+        config.hub_env_file = dir.join("hub.env");
+        std::fs::write(&config.hub_env_file, "HUB_LOG_LEVEL=debug\nFISCAL_PLUGIN=none\nbroken line\n").unwrap();
+
+        let (env, warnings) = spawn_env(&config, &test_creds(None));
+        let get = |key: &str| env.iter().rev().find(|(k, _)| k == key).map(|(_, v)| v.as_str());
+        assert_eq!(get("HUB_LOG_LEVEL"), Some("debug"));
+        assert_eq!(get("FISCAL_PLUGIN"), Some("dr-ncf"));
+        assert_eq!(get("ODOO_USER"), Some("pos_hub"));
+        assert_eq!(warnings.len(), 2, "{warnings:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn spawn_env_without_a_hub_env_file_is_just_the_managed_env() {
+        let mut config = test_config();
+        config.hub_env_file = std::env::temp_dir().join(format!("tray-no-hub-env-{}.env", std::process::id()));
+        let _ = std::fs::remove_file(&config.hub_env_file);
+        let (env, warnings) = spawn_env(&config, &test_creds(None));
+        let managed: Vec<(String, String)> = hub_env(&config, &test_creds(None))
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect();
+        assert_eq!(env, managed);
+        assert!(warnings.is_empty());
     }
 
     #[test]

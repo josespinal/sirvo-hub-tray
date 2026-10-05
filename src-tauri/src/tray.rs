@@ -13,6 +13,7 @@ use tauri::{
 };
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
+use tauri_plugin_opener::OpenerExt;
 
 fn icon_for(state: HubState, app: &AppHandle) -> Option<Image<'static>> {
     let resource = app.path().resource_dir().ok()?;
@@ -115,6 +116,7 @@ impl TrayController {
         let stop     = MenuItem::with_id(&self.app, "stop",      t(&lang, "tray.stop"),     matches!(state, HubState::Running), None::<&str>)?;
         let odoo     = MenuItem::with_id(&self.app, "odoo",      t(&lang, "tray.odooConnection"), true, None::<&str>)?;
         let logs     = MenuItem::with_id(&self.app, "logs",      t(&lang, "tray.viewLogs"), true, None::<&str>)?;
+        let hub_env  = MenuItem::with_id(&self.app, "hub_env",   t(&lang, "tray.hubSettings"), true, None::<&str>)?;
 
         let settings_now = settings::load(&self.app);
         let autostart = CheckMenuItem::with_id(&self.app, "autostart", t(&lang, "tray.autostart"), true, settings_now.autostart, None::<&str>)?;
@@ -141,6 +143,7 @@ impl TrayController {
                 &stop,
                 &PredefinedMenuItem::separator(&self.app)?,
                 &odoo,
+                &hub_env,
                 &logs,
                 &autostart,
                 &lang_sub,
@@ -215,6 +218,19 @@ fn handle_menu_event(app: &AppHandle, id: &str, ctrl: &TrayController) {
             }
         }
         "odoo" => open_setup_window(app, &ctrl.lang.lock()),
+        "hub_env" => {
+            // Created on first use with a commented template, then opened in
+            // the system's default editor. Read again on every hub start.
+            let path = crate::paths::hub_env_path(app);
+            match crate::hub_env_file::ensure_exists(&path) {
+                Ok(()) => {
+                    if let Err(e) = app.opener().open_path(path.to_string_lossy(), None::<&str>) {
+                        log::warn!("could not open {}: {e}", path.display());
+                    }
+                }
+                Err(e) => log::warn!("could not create {}: {e}", path.display()),
+            }
+        }
         "logs" => {
             if let Some(win) = app.get_webview_window("logs") {
                 let _ = win.show();

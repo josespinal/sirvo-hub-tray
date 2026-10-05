@@ -22,7 +22,8 @@
     "quit": "Salir",
     "needsSetup": "Hub: Falta la conexión a Odoo",
     "configError": "Hub: Odoo rechazó la configuración",
-    "odooConnection": "Conexión a Odoo…"
+    "odooConnection": "Conexión a Odoo…",
+    "hubSettings": "Ajustes del hub (hub.env)…"
   },
   "dialog": {
     "stopTitle": "¿Detener el Hub?",

@@ -22,7 +22,8 @@
     "quit": "Quit",
     "needsSetup": "Hub: Needs Odoo connection",
     "configError": "Hub: Odoo settings refused",
-    "odooConnection": "Connection to Odoo…"
+    "odooConnection": "Connection to Odoo…",
+    "hubSettings": "Hub Settings (hub.env)…"
   },
   "dialog": {
     "stopTitle": "Stop the Hub?",
