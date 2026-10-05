@@ -52,6 +52,34 @@ pub struct SupervisorConfig {
     pub http_port: u16,
 }
 
+/// The hub's environment. Set explicitly so a value inherited from the
+/// desktop session can never decide how the hub talks to Odoo.
+fn hub_env(config: &SupervisorConfig, odoo: &crate::odoo_conn::HubCredentials) -> Vec<(&'static str, String)> {
+    vec![
+        ("HUB_PORT", config.ws_port.to_string()),
+        ("HUB_HTTP_PORT", config.http_port.to_string()),
+        ("HUB_ADMIN_PORT", config.admin_port.to_string()),
+        ("HUB_DB_PATH", config.db_path.to_string_lossy().into_owned()),
+        ("ODOO_URL", odoo.url.clone()),
+        ("ODOO_DB", odoo.db.clone()),
+        ("ODOO_USER", odoo.user.clone()),
+        ("ODOO_PASSWORD", odoo.password.clone()),
+        // Every request the hub makes to Odoo carries it (needs hub
+        // v0.15+; older hubs send it on XML-RPC only).
+        (
+            "ODOO_RPC_HEADERS",
+            odoo.waf_token
+                .as_deref()
+                .map(|t| format!("{}:{t}", crate::odoo_conn::WAF_HEADER))
+                .unwrap_or_default(),
+        ),
+        // Dominican fiscal: payments are finalized in Odoo synchronously, with
+        // NCF, invoice and reservation advances. Without it the hub falls back
+        // to "none" (older hubs) or refuses to start (rost_pos_restaurant#181).
+        ("FISCAL_PLUGIN", "dr-ncf".to_string()),
+    ]
+}
+
 pub struct Supervisor {
     state: Arc<Mutex<HubState>>,
     child: Arc<Mutex<Option<Child>>>,
@@ -145,20 +173,7 @@ impl Supervisor {
         let mut cmd = Command::new(&self.config.node_binary);
         cmd.arg(&self.config.hub_entry)
             .current_dir(&self.config.hub_dir)
-            .env("HUB_PORT", self.config.ws_port.to_string())
-            .env("HUB_HTTP_PORT", self.config.http_port.to_string())
-            .env("HUB_ADMIN_PORT", self.config.admin_port.to_string())
-            .env("HUB_DB_PATH", &self.config.db_path)
-            .env("ODOO_URL", &odoo.url)
-            .env("ODOO_DB", &odoo.db)
-            .env("ODOO_USER", &odoo.user)
-            .env("ODOO_PASSWORD", &odoo.password)
-            // Every request the hub makes to Odoo carries it (needs hub
-            // v0.15+; older hubs send it on XML-RPC only).
-            .env(
-                "ODOO_RPC_HEADERS",
-                odoo.waf_token.as_deref().map(|t| format!("{}:{t}", crate::odoo_conn::WAF_HEADER)).unwrap_or_default(),
-            )
+            .envs(hub_env(&self.config, &odoo))
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
@@ -390,6 +405,65 @@ fn spawn_log_writer(path: PathBuf, max_bytes: u64) -> mpsc::UnboundedSender<Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_config() -> SupervisorConfig {
+        SupervisorConfig {
+            node_binary: PathBuf::from("node"),
+            hub_entry: PathBuf::from("dist/index.js"),
+            hub_dir: PathBuf::from("."),
+            db_path: PathBuf::from("hub.sqlite"),
+            log_file: PathBuf::from("hub.log"),
+            admin_port: 8767,
+            ws_port: 8765,
+            http_port: 8766,
+        }
+    }
+
+    fn test_creds(waf_token: Option<&str>) -> crate::odoo_conn::HubCredentials {
+        crate::odoo_conn::HubCredentials {
+            url: "https://odoo.example".into(),
+            db: "pos".into(),
+            user: "pos_hub".into(),
+            password: "secret".into(),
+            waf_token: waf_token.map(String::from),
+        }
+    }
+
+    fn env_value<'a>(env: &'a [(&'static str, String)], key: &str) -> Option<&'a str> {
+        env.iter().find(|(k, _)| *k == key).map(|(_, v)| v.as_str())
+    }
+
+    // Hubs from rost_pos_restaurant#181 on refuse to start without
+    // FISCAL_PLUGIN; older ones fell back to "none": payments forwarded with
+    // no NCF, invoice or reservation advances.
+    #[test]
+    fn hub_env_sets_the_dominican_fiscal_plugin() {
+        let env = hub_env(&test_config(), &test_creds(None));
+        assert_eq!(env_value(&env, "FISCAL_PLUGIN"), Some("dr-ncf"));
+    }
+
+    #[test]
+    fn hub_env_passes_ports_db_and_odoo_credentials() {
+        let env = hub_env(&test_config(), &test_creds(Some("tok")));
+        assert_eq!(env_value(&env, "HUB_PORT"), Some("8765"));
+        assert_eq!(env_value(&env, "HUB_HTTP_PORT"), Some("8766"));
+        assert_eq!(env_value(&env, "HUB_ADMIN_PORT"), Some("8767"));
+        assert_eq!(env_value(&env, "HUB_DB_PATH"), Some("hub.sqlite"));
+        assert_eq!(env_value(&env, "ODOO_URL"), Some("https://odoo.example"));
+        assert_eq!(env_value(&env, "ODOO_DB"), Some("pos"));
+        assert_eq!(env_value(&env, "ODOO_USER"), Some("pos_hub"));
+        assert_eq!(env_value(&env, "ODOO_PASSWORD"), Some("secret"));
+        assert_eq!(
+            env_value(&env, "ODOO_RPC_HEADERS"),
+            Some(format!("{}:tok", crate::odoo_conn::WAF_HEADER).as_str())
+        );
+    }
+
+    #[test]
+    fn hub_env_sends_empty_rpc_headers_without_a_waf_token() {
+        let env = hub_env(&test_config(), &test_creds(None));
+        assert_eq!(env_value(&env, "ODOO_RPC_HEADERS"), Some(""));
+    }
 
     #[test]
     fn restart_delay_backs_off_and_caps_at_a_minute() {
