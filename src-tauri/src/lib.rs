@@ -1,4 +1,5 @@
 mod commands;
+mod hub_env_file;
 mod i18n;
 mod log_buffer;
 mod odoo_conn;
@@ -76,6 +77,7 @@ pub fn run() {
                 admin_port: ADMIN_PORT,
                 ws_port: WS_PORT,
                 http_port: HTTP_PORT,
+                hub_env_file: paths::hub_env_path(&handle),
             };
             let supervisor = Arc::new(Supervisor::new(handle.clone(), cfg, log_buffer.clone()));
             supervisor.spawn_auto_restart();

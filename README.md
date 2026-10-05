@@ -72,6 +72,22 @@ refused" and reopens the window with the hub's reason.
 
 See [docs/spec_odoo_credentials.md](docs/spec_odoo_credentials.md).
 
+### Other hub settings (`hub.env`)
+
+The tray starts the hub itself, so it never reads a `.env` file. For the hub's
+other environment variables (log level, Litestream backups, plugins…), use
+**Hub Settings (hub.env)…** in the tray menu. It creates `hub.env` in the data
+folder (see [Data locations](#data-locations)) with a commented template and
+opens it in the default editor.
+
+- One `KEY=VALUE` per line; `#` starts a comment line; no inline comments.
+- Read on every hub start: use **Restart** after editing.
+- The tray always sets `HUB_PORT`, `HUB_HTTP_PORT`, `HUB_ADMIN_PORT`,
+  `HUB_DB_PATH`, the `ODOO_*` connection values and `FISCAL_PLUGIN=dr-ncf`
+  itself. The file cannot override them; the log says when a line was ignored.
+- It may hold secrets (backup credentials), so on macOS/Linux the tray keeps it
+  readable by your user only (0600), and tightens it again on every start.
+
 ## Uninstall
 
 ### Windows
@@ -91,6 +107,8 @@ The bundled hub and the tray app share Tauri's per-platform data dirs:
 | --- | --- | --- |
 | macOS | `~/Library/Application Support/com.sirvo.hub.tray/hub.sqlite` | `~/Library/Logs/com.sirvo.hub.tray/hub.log` |
 | Windows | `%APPDATA%\com.sirvo.hub.tray\hub.sqlite` | `%APPDATA%\com.sirvo.hub.tray\logs\hub.log` |
+
+`hub.env` sits next to `hub.sqlite`.
 
 Paths are derived from Tauri's `app_data_dir` and `app_log_dir`.
 

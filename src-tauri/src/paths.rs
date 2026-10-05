@@ -41,3 +41,10 @@ pub fn log_file_path(app: &AppHandle) -> PathBuf {
     std::fs::create_dir_all(&dir).ok();
     dir.join("hub.log")
 }
+
+/// Extra hub environment variables, editable by the operator (`hub_env_file`).
+pub fn hub_env_path(app: &AppHandle) -> PathBuf {
+    let dir = app.path().app_data_dir().expect("app_data_dir");
+    std::fs::create_dir_all(&dir).ok();
+    dir.join("hub.env")
+}
