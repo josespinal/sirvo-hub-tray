@@ -560,10 +560,7 @@ impl Supervisor {
 /// alongside node.exe or litestream.exe. 0x08000000 = CREATE_NO_WINDOW.
 fn hide_console(cmd: &mut Command) {
     #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x08000000);
-    }
+    cmd.creation_flags(0x08000000);
     #[cfg(not(target_os = "windows"))]
     let _ = cmd;
 }
