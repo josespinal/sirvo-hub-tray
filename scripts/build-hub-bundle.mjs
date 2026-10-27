@@ -7,6 +7,7 @@
  *   resources/hub/dist/...        (compiled JS)
  *   resources/hub/node_modules/...(production deps only)
  *   resources/hub/package.json    (with version stamp)
+ *   resources/hub/litestream.yml  (backup config, see src-tauri/src/backup.rs)
  *
  * The tray's Rust supervisor invokes `node dist/index.js` against this dir.
  */
@@ -47,6 +48,11 @@ sh("npm", ["run", "build"], hubRoot);
 
 console.log("[hub] copying dist/");
 cpSync(resolve(hubRoot, "dist"), resolve(stagingRoot, "dist"), { recursive: true });
+
+// Read by `litestream replicate`/`restore` when hub.env sets
+// LITESTREAM_REPLICA_URL (src-tauri/src/backup.rs).
+console.log("[hub] copying litestream.yml");
+cpSync(resolve(hubRoot, "litestream.yml"), resolve(stagingRoot, "litestream.yml"));
 
 console.log("[hub] copying package.json");
 const pkg = JSON.parse(readFileSync(resolve(hubRoot, "package.json"), "utf8"));

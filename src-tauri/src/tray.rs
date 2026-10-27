@@ -52,7 +52,7 @@ impl TrayController {
     /// changed: `uptime_sec` changes every time, and replacing the menu
     /// while it is open closes it or makes it flicker on Windows.
     pub fn update_status(&self, status: HubStatus) {
-        let shown = |s: &HubStatus| (s.connected_terminals, s.lan_url.clone());
+        let shown = |s: &HubStatus| (s.connected_terminals, s.lan_url.clone(), s.backup_mode.clone());
         let changed = {
             let mut last = self.last_status.lock();
             let changed = shown(&last) != shown(&status);
@@ -107,9 +107,12 @@ impl TrayController {
             None => t(&lang, "tray.lanUrlUnknown"),
         };
 
+        let backup_label = t_fmt(&lang, "tray.backup", &[("mode", &backup_mode_label(&lang, status.backup_mode.as_deref()))]);
+
         let header   = MenuItem::with_id(&self.app, "header",    self.header_label(), false, None::<&str>)?;
         let terms    = MenuItem::with_id(&self.app, "terms",     terminals_label,    false, None::<&str>)?;
         let lan      = MenuItem::with_id(&self.app, "lan",       lan_label,          false, None::<&str>)?;
+        let backup   = MenuItem::with_id(&self.app, "backup",    backup_label,       false, None::<&str>)?;
         let copy_lan = MenuItem::with_id(&self.app, "copy_lan",  t(&lang, "tray.copyLanUrl"), status.lan_url.is_some(), None::<&str>)?;
         let start    = MenuItem::with_id(&self.app, "start",     t(&lang, "tray.start"),    matches!(state, HubState::Stopped | HubState::Errored | HubState::NeedsSetup | HubState::ConfigError), None::<&str>)?;
         let restart  = MenuItem::with_id(&self.app, "restart",   t(&lang, "tray.restart"),  matches!(state, HubState::Running), None::<&str>)?;
@@ -137,6 +140,7 @@ impl TrayController {
                 &terms,
                 &lan,
                 &copy_lan,
+                &backup,
                 &PredefinedMenuItem::separator(&self.app)?,
                 &start,
                 &restart,
@@ -158,6 +162,16 @@ impl TrayController {
         }
         Ok(())
     }
+}
+
+/// The hub's `backup.mode` in words; an unknown mode is shown as is.
+fn backup_mode_label(lang: &str, mode: Option<&str>) -> String {
+    let Some(mode) = mode else {
+        return t(lang, "tray.backupModes.unknown");
+    };
+    let key = format!("tray.backupModes.{mode}");
+    let label = t(lang, &key);
+    if label == key { mode.to_string() } else { label }
 }
 
 pub fn install(app: &AppHandle, initial_lang: String) -> tauri::Result<TrayController> {

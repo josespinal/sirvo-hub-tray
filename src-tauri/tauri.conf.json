@@ -43,6 +43,7 @@
     "resources": [
       "resources/hub/**/*",
       "resources/node/**/*",
+      "resources/litestream/**/*",
       "icons/tray-running.png",
       "icons/tray-stopped.png",
       "icons/tray-error.png"

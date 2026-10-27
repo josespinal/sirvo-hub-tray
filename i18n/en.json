@@ -23,7 +23,15 @@
     "needsSetup": "Hub: Needs Odoo connection",
     "configError": "Hub: Odoo settings refused",
     "odooConnection": "Connection to Odoo…",
-    "hubSettings": "Hub Settings (hub.env)…"
+    "hubSettings": "Hub Settings (hub.env)…",
+    "backup": "Backup: {mode}",
+    "backupModes": {
+      "litestream": "Litestream running",
+      "none": "off (no LITESTREAM_REPLICA_URL)",
+      "unavailable": "Litestream unavailable",
+      "restore_failed": "OFF, restore failed (see logs)",
+      "unknown": "unknown"
+    }
   },
   "dialog": {
     "stopTitle": "Stop the Hub?",

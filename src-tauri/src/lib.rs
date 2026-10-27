@@ -1,3 +1,4 @@
+mod backup;
 mod commands;
 mod hub_env_file;
 mod i18n;
@@ -78,10 +79,12 @@ pub fn run() {
                 ws_port: WS_PORT,
                 http_port: HTTP_PORT,
                 hub_env_file: paths::hub_env_path(&handle),
+                litestream_binary: paths::litestream_binary(&handle),
+                litestream_config: paths::litestream_config(&handle),
             };
             let supervisor = Arc::new(Supervisor::new(handle.clone(), cfg, log_buffer.clone()));
             supervisor.spawn_auto_restart();
-            let status_client = StatusClient::new(handle.clone(), ADMIN_PORT);
+            let status_client = StatusClient::new(handle.clone(), ADMIN_PORT, HTTP_PORT);
 
             handle.manage(AppState {
                 supervisor: supervisor.clone(),
