@@ -20,8 +20,12 @@ pub const TEMPLATE: &str = "\
 #
 # The tray sets these itself and ignores them here: HUB_PORT, HUB_HTTP_PORT,
 # HUB_ADMIN_PORT, HUB_DB_PATH, ODOO_URL, ODOO_DB, ODOO_USER, ODOO_PASSWORD,
-# ODOO_RPC_HEADERS, FISCAL_PLUGIN. Change the Odoo connection from the tray
-# menu (Connection to Odoo…).
+# ODOO_RPC_HEADERS, FISCAL_PLUGIN, HUB_BACKUP_MODE. Change the Odoo connection
+# from the tray menu (Connection to Odoo…).
+#
+# Backups: with LITESTREAM_REPLICA_URL set, the hub runs under Litestream
+# (bundled on Windows), which copies its database there continuously and
+# restores it on a new machine. Every hub needs its own path.
 #
 # Examples:
 # HUB_LOG_LEVEL=debug

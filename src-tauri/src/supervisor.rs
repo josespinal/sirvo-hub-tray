@@ -1,3 +1,4 @@
+use crate::backup::{self, HubExit, Plan};
 use crate::log_buffer::LogBuffer;
 use anyhow::{anyhow, Result};
 use parking_lot::Mutex;
@@ -33,6 +34,9 @@ const HEALTHY_RUN: Duration = Duration::from_secs(120);
 const MAX_RESTART_DELAY: Duration = Duration::from_secs(60);
 /// `hub.log` is rotated to `hub.log.1` (replacing it) past this size.
 const LOG_ROTATE_BYTES: u64 = 10 * 1024 * 1024;
+/// A restore that takes longer is treated as failed (backup destination
+/// unreachable), so the hub still starts.
+const RESTORE_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Delay before the `attempt`-th restart in a row (0-based): 2s, 4s, 8s…
 /// capped at a minute.
@@ -52,6 +56,9 @@ pub struct SupervisorConfig {
     pub http_port: u16,
     /// Extra hub environment (see `hub_env_file`), read on every start.
     pub hub_env_file: PathBuf,
+    /// Bundled Litestream (Windows only) and its config (see `backup`).
+    pub litestream_binary: PathBuf,
+    pub litestream_config: PathBuf,
 }
 
 /// The hub's environment. Set explicitly so a value inherited from the
@@ -107,6 +114,13 @@ pub struct Supervisor {
     /// Signal channel for the watcher to wake up when stop() runs.
     /// Wrapped in Mutex<Option<>> so we can replace per run.
     shutdown_tx: Arc<Mutex<Option<oneshot::Sender<()>>>>,
+    /// The running hub was started under `litestream replicate`.
+    under_litestream: Arc<AtomicBool>,
+    /// Litestream failed to run this session: run the hub without it until
+    /// the operator restarts it.
+    litestream_failed: Arc<AtomicBool>,
+    /// The hub's exit as Litestream reported it on stderr.
+    hub_exit: Arc<Mutex<Option<HubExit>>>,
     log_buffer: LogBuffer,
     config: SupervisorConfig,
     app: AppHandle,
@@ -137,6 +151,9 @@ impl Supervisor {
             shutdown_tx: Arc::new(Mutex::new(None)),
             crashes: Arc::new(AtomicU32::new(0)),
             restart_tx: Arc::new(Mutex::new(None)),
+            under_litestream: Arc::new(AtomicBool::new(false)),
+            litestream_failed: Arc::new(AtomicBool::new(false)),
+            hub_exit: Arc::new(Mutex::new(None)),
             log_buffer,
             config,
             app,
@@ -184,35 +201,44 @@ impl Supervisor {
         self.set_state(HubState::Starting);
         self.intentional_stop.store(false, Ordering::SeqCst);
 
-        let (env, env_warnings) = spawn_env(&self.config, &odoo);
+        let (mut env, env_warnings) = spawn_env(&self.config, &odoo);
         for warning in env_warnings {
             log::warn!("{warning}");
             self.log_buffer.push(format!("[tray] {warning}"));
         }
+        // Set per start below; a value from hub.env would misreport backups.
+        env.retain(|(k, _)| k != backup::BACKUP_MODE_VAR);
 
-        let mut cmd = Command::new(&self.config.node_binary);
-        cmd.arg(&self.config.hub_entry)
-            .current_dir(&self.config.hub_dir)
-            .envs(env)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
+        // One writer for the restore's and the hub's output, so rotation has
+        // a single owner.
+        let log_tx = spawn_log_writer(self.config.log_file.clone(), LOG_ROTATE_BYTES);
 
-        // On Windows, suppress the console window that would otherwise pop
-        // up alongside node.exe. 0x08000000 = CREATE_NO_WINDOW.
-        #[cfg(target_os = "windows")]
-        {
-            use std::os::windows::process::CommandExt;
-            cmd.creation_flags(0x08000000);
+        let mut mode = self.backup_mode(&env, &log_tx).await;
+        if self.intentional_stop.load(Ordering::SeqCst) {
+            // Stopped while restoring.
+            return Ok(());
         }
-
-        let mut child = match cmd.spawn() {
+        let mut litestream = mode == backup::MODE_LITESTREAM;
+        let spawned = match self.spawn_hub(&env, mode, litestream) {
+            Err(e) if litestream => {
+                // The hub must run even if Litestream can't.
+                self.tray_log(&log_tx, format!("could not start Litestream ({e}); starting the hub WITHOUT backups"));
+                self.litestream_failed.store(true, Ordering::SeqCst);
+                mode = backup::MODE_UNAVAILABLE;
+                litestream = false;
+                self.spawn_hub(&env, mode, false)
+            }
+            other => other,
+        };
+        let mut child = match spawned {
             Ok(c) => c,
             Err(e) => {
                 self.set_state(HubState::Errored);
                 return Err(anyhow!("spawn node: {e}"));
             }
         };
+        self.under_litestream.store(litestream, Ordering::SeqCst);
+        *self.hub_exit.lock() = None;
 
         #[cfg(windows)]
         if let (Some(job), Some(handle)) = (&self.job, child.raw_handle()) {
@@ -235,10 +261,16 @@ impl Supervisor {
                 return Err(anyhow!("no stderr"));
             }
         };
-        // One writer for both streams, so rotation has a single owner.
-        let log_tx = spawn_log_writer(self.config.log_file.clone(), LOG_ROTATE_BYTES);
-        spawn_reader(stdout, self.log_buffer.clone(), self.app.clone(), "out", log_tx.clone());
-        spawn_reader(stderr, self.log_buffer.clone(), self.app.clone(), "err", log_tx);
+        spawn_reader(stdout, self.log_buffer.clone(), self.app.clone(), "out", log_tx.clone(), None);
+        let on_line: Option<OnLine> = litestream.then(|| {
+            let slot = self.hub_exit.clone();
+            Arc::new(move |line: &str| {
+                if let Some(exit) = backup::hub_exit_from_litestream_line(line) {
+                    *slot.lock() = Some(exit);
+                }
+            }) as OnLine
+        });
+        let stderr_done = spawn_reader(stderr, self.log_buffer.clone(), self.app.clone(), "err", log_tx, on_line);
 
         let pid = child.id();
         let (tx, mut rx) = oneshot::channel::<()>();
@@ -254,6 +286,9 @@ impl Supervisor {
         let restart_tx = self.restart_tx.clone();
         let log_buffer = self.log_buffer.clone();
         let started = Instant::now();
+        let hub_exit = self.hub_exit.clone();
+        let litestream_failed = self.litestream_failed.clone();
+        let mut stderr_done = Some(stderr_done);
 
         tokio::spawn(async move {
             // Race the child's exit against an explicit shutdown signal.
@@ -273,12 +308,39 @@ impl Supervisor {
 
                 tokio::select! {
                     status = c.wait() => {
+                        if litestream {
+                            // Litestream's last stderr line says how the hub
+                            // ended; let the reader get to it.
+                            if let Some(done) = stderr_done.take() {
+                                let _ = tokio::time::timeout(Duration::from_secs(2), done).await;
+                            }
+                        }
                         let next = if intentional.load(Ordering::SeqCst) {
                             HubState::Stopped
                         } else {
-                            match status {
+                            let code = match &status {
+                                Ok(s) if s.success() => None,
+                                // Litestream exits 1 whatever the hub's code was.
+                                Ok(s) if litestream => match *hub_exit.lock() {
+                                    Some(HubExit::Code(code)) => Some(code),
+                                    Some(HubExit::Signal) => None,
+                                    None => {
+                                        litestream_failed.store(true, Ordering::SeqCst);
+                                        let line = format!(
+                                            "[tray] Litestream failed ({s}) without running the hub; \
+                                             the next start runs the hub WITHOUT backups (Restart to retry)"
+                                        );
+                                        log_buffer.push(line.clone());
+                                        let _ = app.emit("hub-log-line", line);
+                                        None
+                                    }
+                                },
+                                Ok(s) => s.code(),
+                                Err(_) => None,
+                            };
+                            match &status {
                                 Ok(s) if s.success() => HubState::Stopped,
-                                Ok(s) if s.code() == Some(EXIT_CONFIG_ERROR) => HubState::ConfigError,
+                                _ if code == Some(EXIT_CONFIG_ERROR) => HubState::ConfigError,
                                 _ => HubState::Errored,
                             }
                         };
@@ -350,41 +412,235 @@ impl Supervisor {
         // explicitly wait so we know the process is reaped before returning.
         let taken = { self.child.lock().take() };
         if let Some(mut c) = taken {
-            let _ = c.start_kill();
-            let _ = c.wait().await;
+            kill_hub(&mut c, self.under_litestream.load(Ordering::SeqCst)).await;
         }
         self.set_state(HubState::Stopped);
         Ok(())
     }
 
+    /// Also retries Litestream after it failed earlier in this session.
     pub async fn restart(&self) -> Result<()> {
+        self.litestream_failed.store(false, Ordering::SeqCst);
         self.set_state(HubState::Restarting);
         self.stop().await?;
         // Small yield so any pending watcher emit is processed before start.
         tokio::task::yield_now().await;
         self.start().await
     }
+
+    /// A tray message in the logs window, the log buffer and `hub.log`.
+    fn tray_log(&self, log_tx: &mpsc::UnboundedSender<String>, msg: impl AsRef<str>) {
+        let line = format!("[tray] {}", msg.as_ref());
+        log::info!("{line}");
+        self.log_buffer.push(line.clone());
+        let _ = log_tx.send(line.clone());
+        let _ = self.app.emit("hub-log-line", line);
+    }
+
+    /// Decide how backups run this start (see `backup`), restoring a missing
+    /// database first. Returns the mode to give the hub.
+    async fn backup_mode(&self, env: &[(String, String)], log_tx: &mpsc::UnboundedSender<String>) -> &'static str {
+        let db = &self.config.db_path;
+        let marker = backup::restore_failed_marker(db);
+        let plan = backup::plan(&backup::Facts {
+            replica_configured: backup::replica_url(env).is_some(),
+            litestream_present: self.config.litestream_binary.is_file(),
+            restore_failed_marker: marker.exists(),
+            litestream_failed: self.litestream_failed.load(Ordering::SeqCst),
+            db_exists: db.exists(),
+        });
+        match plan {
+            Plan::Direct(backup::MODE_NONE) => backup::MODE_NONE,
+            Plan::Direct(backup::MODE_RESTORE_FAILED) => self.restore_failed(log_tx),
+            Plan::Direct(mode) => {
+                let why = if self.config.litestream_binary.is_file() {
+                    "it failed earlier (Restart to retry)".to_string()
+                } else {
+                    format!("{} not found", self.config.litestream_binary.display())
+                };
+                self.tray_log(log_tx, format!("LITESTREAM_REPLICA_URL is set but Litestream is not available ({why}): running WITHOUT backups"));
+                mode
+            }
+            Plan::Replicate => {
+                self.tray_log(log_tx, format!("backing up {} with Litestream", db.display()));
+                backup::MODE_LITESTREAM
+            }
+            Plan::RestoreThenReplicate => {
+                // A new or replaced machine: rebuild the database from the
+                // backup before the hub creates an empty one.
+                self.tray_log(log_tx, format!("no database at {}: restoring it from the backup, if one exists", db.display()));
+                if self.restore(env, log_tx).await {
+                    self.tray_log(log_tx, format!("backing up {} with Litestream", db.display()));
+                    backup::MODE_LITESTREAM
+                } else {
+                    if let Err(e) = backup::write_restore_failed_marker(db) {
+                        self.tray_log(log_tx, format!("could not write {}: {e}", marker.display()));
+                    }
+                    self.restore_failed(log_tx)
+                }
+            }
+        }
+    }
+
+    fn restore_failed(&self, log_tx: &mpsc::UnboundedSender<String>) -> &'static str {
+        let c = &self.config;
+        for line in backup::restore_failed_help(&c.litestream_binary, &c.litestream_config, &c.db_path) {
+            self.tray_log(log_tx, line);
+        }
+        backup::MODE_RESTORE_FAILED
+    }
+
+    /// `litestream restore`: a no-op on the very first start, when there is no
+    /// backup yet (-if-replica-exists). False when it failed or timed out,
+    /// typically because the backup destination is unreachable at boot.
+    async fn restore(&self, env: &[(String, String)], log_tx: &mpsc::UnboundedSender<String>) -> bool {
+        let mut cmd = Command::new(&self.config.litestream_binary);
+        cmd.arg("restore")
+            .arg("-config")
+            .arg(&self.config.litestream_config)
+            .args(["-if-db-not-exists", "-if-replica-exists"])
+            .arg(&self.config.db_path)
+            .current_dir(&self.config.hub_dir)
+            .envs(env.iter().map(|(k, v)| (k, v)))
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        hide_console(&mut cmd);
+        let mut child = match cmd.spawn() {
+            Ok(c) => c,
+            Err(e) => {
+                self.tray_log(log_tx, format!("could not start the Litestream restore: {e}"));
+                return false;
+            }
+        };
+        let dir_sync_error = Arc::new(AtomicBool::new(false));
+        if let Some(out) = child.stdout.take() {
+            spawn_reader(out, self.log_buffer.clone(), self.app.clone(), "restore", log_tx.clone(), None);
+        }
+        let stderr_done = child.stderr.take().map(|err| {
+            let flag = dir_sync_error.clone();
+            let on_line: OnLine = Arc::new(move |line: &str| {
+                if backup::is_windows_dir_sync_error(line) {
+                    flag.store(true, Ordering::SeqCst);
+                }
+            });
+            spawn_reader(err, self.log_buffer.clone(), self.app.clone(), "restore", log_tx.clone(), Some(on_line))
+        });
+        let waited = tokio::time::timeout(RESTORE_TIMEOUT, child.wait()).await;
+        if let Some(done) = stderr_done {
+            let _ = tokio::time::timeout(Duration::from_secs(2), done).await;
+        }
+        match waited {
+            Ok(Ok(status)) if status.success() => true,
+            // The database is complete and in place; only the folder fsync
+            // after the rename failed (see `is_windows_dir_sync_error`).
+            Ok(Ok(_)) if dir_sync_error.load(Ordering::SeqCst) && self.config.db_path.is_file() => {
+                self.tray_log(log_tx, "the database was restored (Litestream's folder sync after it is not supported on Windows)");
+                true
+            }
+            Ok(Ok(status)) => {
+                self.tray_log(log_tx, format!("Litestream restore failed ({status})"));
+                false
+            }
+            Ok(Err(e)) => {
+                self.tray_log(log_tx, format!("Litestream restore failed: {e}"));
+                false
+            }
+            Err(_) => {
+                let _ = child.start_kill();
+                self.tray_log(log_tx, format!("Litestream restore timed out after {}s", RESTORE_TIMEOUT.as_secs()));
+                false
+            }
+        }
+    }
+
+    /// The hub, or Litestream running the hub as its child.
+    fn spawn_hub(&self, env: &[(String, String)], mode: &str, litestream: bool) -> std::io::Result<Child> {
+        let c = &self.config;
+        let mut cmd = if litestream {
+            let mut cmd = Command::new(&c.litestream_binary);
+            cmd.arg("replicate").arg("-config").arg(&c.litestream_config).arg("-exec").arg(
+                backup::exec_command(&[&c.node_binary.to_string_lossy(), &c.hub_entry.to_string_lossy()]),
+            );
+            cmd
+        } else {
+            let mut cmd = Command::new(&c.node_binary);
+            cmd.arg(&c.hub_entry);
+            cmd
+        };
+        cmd.current_dir(&c.hub_dir)
+            .envs(env.iter().map(|(k, v)| (k, v)))
+            .env(backup::BACKUP_MODE_VAR, mode)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        hide_console(&mut cmd);
+        cmd.spawn()
+    }
 }
 
+/// On Windows, suppress the console window that would otherwise pop up
+/// alongside node.exe or litestream.exe. 0x08000000 = CREATE_NO_WINDOW.
+fn hide_console(cmd: &mut Command) {
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(0x08000000);
+    #[cfg(not(target_os = "windows"))]
+    let _ = cmd;
+}
+
+/// Kill the hub and reap it. Under Litestream the hub is Litestream's child:
+/// killing Litestream alone would leave the hub running on its ports.
+async fn kill_hub(c: &mut Child, under_litestream: bool) {
+    if under_litestream {
+        #[cfg(windows)]
+        if let Some(pid) = c.id() {
+            let mut taskkill = Command::new("taskkill");
+            taskkill.args(["/PID", &pid.to_string(), "/T", "/F"]);
+            hide_console(&mut taskkill);
+            let _ = taskkill.status().await;
+        }
+        // Litestream forwards SIGTERM to the hub and waits for it.
+        #[cfg(unix)]
+        if let Some(pid) = c.id() {
+            let _ = Command::new("kill").args(["-TERM", &pid.to_string()]).status().await;
+            if tokio::time::timeout(Duration::from_secs(10), c.wait()).await.is_ok() {
+                return;
+            }
+        }
+    }
+    let _ = c.start_kill();
+    let _ = c.wait().await;
+}
+
+/// Called with each line a reader forwards.
+type OnLine = Arc<dyn Fn(&str) + Send + Sync>;
+
+/// Forwards `stream`'s lines to the logs until EOF, handing each to `on_line`
+/// first (e.g. to catch Litestream's `Error: exit status N`).
 fn spawn_reader<R>(
     stream: R,
     buf: LogBuffer,
     app: AppHandle,
     stream_name: &'static str,
     log_tx: mpsc::UnboundedSender<String>,
-) where
+    on_line: Option<OnLine>,
+) -> tokio::task::JoinHandle<()>
+where
     R: tokio::io::AsyncRead + Unpin + Send + 'static,
 {
     tokio::spawn(async move {
         let reader = BufReader::new(stream);
         let mut lines = reader.lines();
         while let Ok(Some(line)) = lines.next_line().await {
+            if let Some(f) = &on_line {
+                f(&line);
+            }
             let stamped = format!("[{stream_name}] {line}");
             buf.push(stamped.clone());
             let _ = log_tx.send(stamped.clone());
             let _ = app.emit("hub-log-line", stamped);
         }
-    });
+    })
 }
 
 /// Appends lines to `path`, moving it to `<path>.1` (replacing an older one)
@@ -437,6 +693,8 @@ mod tests {
             ws_port: 8765,
             http_port: 8766,
             hub_env_file: PathBuf::from("hub.env"),
+            litestream_binary: PathBuf::from("litestream"),
+            litestream_config: PathBuf::from("litestream.yml"),
         }
     }
 

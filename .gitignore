@@ -3,6 +3,7 @@ dist/
 src-tauri/target/
 src-tauri/resources/hub/
 src-tauri/resources/node/
+src-tauri/resources/litestream/
 src-tauri/gen/schemas/
 .env
 .env.local

@@ -10,6 +10,9 @@ pub struct HubStatus {
     pub uptime_sec: Option<u64>,
     pub connected_terminals: Option<u32>,
     pub lan_url: Option<String>,
+    /// `backup.mode` from the hub's `/health` (see `backup`). None when the
+    /// hub is down or too old to report it.
+    pub backup_mode: Option<String>,
     pub reachable: bool,
 }
 
@@ -21,15 +24,17 @@ pub struct StatusClient {
 struct Inner {
     app: AppHandle,
     admin_port: u16,
+    http_port: u16,
     last: Mutex<HubStatus>,
 }
 
 impl StatusClient {
-    pub fn new(app: AppHandle, admin_port: u16) -> Self {
+    pub fn new(app: AppHandle, admin_port: u16, http_port: u16) -> Self {
         Self {
             inner: Arc::new(Inner {
                 app,
                 admin_port,
+                http_port,
                 last: Mutex::new(HubStatus::default()),
             }),
         }
@@ -65,6 +70,7 @@ impl StatusClient {
                         uptime_sec: Some(body.uptime_sec),
                         connected_terminals: Some(body.connected_terminals),
                         lan_url: body.lan_url,
+                        backup_mode: self.fetch_backup_mode(&client).await,
                         reachable: true,
                     };
                 }
@@ -73,6 +79,28 @@ impl StatusClient {
             _ => HubStatus { reachable: false, ..Default::default() },
         }
     }
+}
+
+impl StatusClient {
+    /// The admin status doesn't carry it; the LAN-facing `/health` does.
+    async fn fetch_backup_mode(&self, client: &reqwest::Client) -> Option<String> {
+        let url = format!("http://127.0.0.1:{}/health", self.inner.http_port);
+        let res = client.get(&url).send().await.ok()?;
+        if !res.status().is_success() {
+            return None;
+        }
+        res.json::<RawHealth>().await.ok()?.backup.map(|b| b.mode)
+    }
+}
+
+#[derive(Deserialize)]
+struct RawHealth {
+    backup: Option<RawBackup>,
+}
+
+#[derive(Deserialize)]
+struct RawBackup {
+    mode: String,
 }
 
 #[derive(Deserialize)]

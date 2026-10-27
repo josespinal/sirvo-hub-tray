@@ -88,6 +88,26 @@ opens it in the default editor.
 - It may hold secrets (backup credentials), so on macOS/Linux the tray keeps it
   readable by your user only (0600), and tightens it again on every start.
 
+### Backups (Litestream)
+
+The Windows build bundles [Litestream](https://litestream.io) 0.5.17
+(`resources/litestream/`, checksum pinned in `scripts/fetch-litestream.mjs`).
+Set `LITESTREAM_REPLICA_URL` (plus its credentials, e.g. `AWS_ACCESS_KEY_ID` /
+`AWS_SECRET_ACCESS_KEY`) in `hub.env` and restart: the tray then runs the hub
+as `litestream replicate -exec "node dist/index.js"` with the hub's
+`litestream.yml`, the same as `nu_pos_hub/scripts/start-hub.sh`:
+
+- No database yet (new or replaced PC): it is restored from the backup first.
+- A failed restore writes `hub.sqlite.restore-failed` next to the database and
+  backups stay off (so an empty database never overwrites the good backup)
+  until you restore by hand and delete that file. The log says how.
+- The hub always starts. If Litestream is missing or fails, the hub runs
+  without backups; **Restart** tries Litestream again.
+
+The menu shows the hub's `backup.mode` from `/health`: `litestream`, `none`,
+`unavailable` or `restore_failed`. macOS builds don't bundle Litestream yet, so
+with a replica URL set they report `unavailable`.
+
 ## Uninstall
 
 ### Windows

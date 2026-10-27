@@ -30,6 +30,18 @@ pub fn hub_entry(app: &AppHandle) -> PathBuf {
     hub_dir(app).join("dist/index.js")
 }
 
+/// Bundled with the Windows build only (scripts/fetch-litestream.mjs).
+pub fn litestream_binary(app: &AppHandle) -> PathBuf {
+    let base = app.path().resource_dir().expect("resource_dir");
+    let name = if cfg!(target_os = "windows") { "litestream.exe" } else { "litestream" };
+    base.join("resources/litestream").join(name)
+}
+
+/// The hub's own Litestream config, staged with the hub bundle.
+pub fn litestream_config(app: &AppHandle) -> PathBuf {
+    hub_dir(app).join("litestream.yml")
+}
+
 pub fn hub_db_path(app: &AppHandle) -> PathBuf {
     let dir = app.path().app_data_dir().expect("app_data_dir");
     std::fs::create_dir_all(&dir).ok();

@@ -1,13 +1,14 @@
 {
   "name": "@nu/pos-hub-tray",
-  "version": "0.4.5",
+  "version": "0.4.6",
   "private": true,
   "type": "module",
   "scripts": {
     "version:sync": "node scripts/sync-version.mjs",
     "prepare:node": "node scripts/fetch-node-runtime.mjs",
     "prepare:hub": "node scripts/build-hub-bundle.mjs",
-    "prepare:all": "npm run prepare:node && npm run prepare:hub",
+    "prepare:litestream": "node scripts/fetch-litestream.mjs",
+    "prepare:all": "npm run prepare:node && npm run prepare:litestream && npm run prepare:hub",
     "dev": "vite",
     "build": "vite build",
     "tauri": "npm run version:sync && tauri",

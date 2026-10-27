@@ -58,6 +58,11 @@ jobs:
         env:
           NODE_RUNTIME_TARGETS: ${{ matrix.target }}
 
+      - name: Stage Litestream
+        run: npm run prepare:litestream
+        env:
+          LITESTREAM_TARGETS: ${{ matrix.target }}
+
       - name: Stage hub bundle
         run: npm run prepare:hub
 
