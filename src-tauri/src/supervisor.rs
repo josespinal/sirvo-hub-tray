@@ -452,7 +452,12 @@ impl Supervisor {
             Plan::Direct(backup::MODE_NONE) => backup::MODE_NONE,
             Plan::Direct(backup::MODE_RESTORE_FAILED) => self.restore_failed(log_tx),
             Plan::Direct(mode) => {
-                self.tray_log(log_tx, "LITESTREAM_REPLICA_URL is set but Litestream is not available: running WITHOUT backups");
+                let why = if self.config.litestream_binary.is_file() {
+                    "it failed earlier (Restart to retry)".to_string()
+                } else {
+                    format!("{} not found", self.config.litestream_binary.display())
+                };
+                self.tray_log(log_tx, format!("LITESTREAM_REPLICA_URL is set but Litestream is not available ({why}): running WITHOUT backups"));
                 mode
             }
             Plan::Replicate => {
