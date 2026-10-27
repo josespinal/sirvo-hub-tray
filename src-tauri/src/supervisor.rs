@@ -262,14 +262,15 @@ impl Supervisor {
             }
         };
         spawn_reader(stdout, self.log_buffer.clone(), self.app.clone(), "out", log_tx.clone(), None);
-        let stderr_done = spawn_reader(
-            stderr,
-            self.log_buffer.clone(),
-            self.app.clone(),
-            "err",
-            log_tx,
-            litestream.then(|| self.hub_exit.clone()),
-        );
+        let on_line: Option<OnLine> = litestream.then(|| {
+            let slot = self.hub_exit.clone();
+            Arc::new(move |line: &str| {
+                if let Some(exit) = backup::hub_exit_from_litestream_line(line) {
+                    *slot.lock() = Some(exit);
+                }
+            }) as OnLine
+        });
+        let stderr_done = spawn_reader(stderr, self.log_buffer.clone(), self.app.clone(), "err", log_tx, on_line);
 
         let pid = child.id();
         let (tx, mut rx) = oneshot::channel::<()>();
@@ -512,14 +513,31 @@ impl Supervisor {
                 return false;
             }
         };
+        let dir_sync_error = Arc::new(AtomicBool::new(false));
         if let Some(out) = child.stdout.take() {
             spawn_reader(out, self.log_buffer.clone(), self.app.clone(), "restore", log_tx.clone(), None);
         }
-        if let Some(err) = child.stderr.take() {
-            spawn_reader(err, self.log_buffer.clone(), self.app.clone(), "restore", log_tx.clone(), None);
+        let stderr_done = child.stderr.take().map(|err| {
+            let flag = dir_sync_error.clone();
+            let on_line: OnLine = Arc::new(move |line: &str| {
+                if backup::is_windows_dir_sync_error(line) {
+                    flag.store(true, Ordering::SeqCst);
+                }
+            });
+            spawn_reader(err, self.log_buffer.clone(), self.app.clone(), "restore", log_tx.clone(), Some(on_line))
+        });
+        let waited = tokio::time::timeout(RESTORE_TIMEOUT, child.wait()).await;
+        if let Some(done) = stderr_done {
+            let _ = tokio::time::timeout(Duration::from_secs(2), done).await;
         }
-        match tokio::time::timeout(RESTORE_TIMEOUT, child.wait()).await {
+        match waited {
             Ok(Ok(status)) if status.success() => true,
+            // The database is complete and in place; only the folder fsync
+            // after the rename failed (see `is_windows_dir_sync_error`).
+            Ok(Ok(_)) if dir_sync_error.load(Ordering::SeqCst) && self.config.db_path.is_file() => {
+                self.tray_log(log_tx, "the database was restored (Litestream's folder sync after it is not supported on Windows)");
+                true
+            }
             Ok(Ok(status)) => {
                 self.tray_log(log_tx, format!("Litestream restore failed ({status})"));
                 false
@@ -594,15 +612,18 @@ async fn kill_hub(c: &mut Child, under_litestream: bool) {
     let _ = c.wait().await;
 }
 
-/// Forwards `stream`'s lines to the logs until EOF. With `hub_exit`, also
-/// records how the hub ended from Litestream's `Error: exit status N` line.
+/// Called with each line a reader forwards.
+type OnLine = Arc<dyn Fn(&str) + Send + Sync>;
+
+/// Forwards `stream`'s lines to the logs until EOF, handing each to `on_line`
+/// first (e.g. to catch Litestream's `Error: exit status N`).
 fn spawn_reader<R>(
     stream: R,
     buf: LogBuffer,
     app: AppHandle,
     stream_name: &'static str,
     log_tx: mpsc::UnboundedSender<String>,
-    hub_exit: Option<Arc<Mutex<Option<HubExit>>>>,
+    on_line: Option<OnLine>,
 ) -> tokio::task::JoinHandle<()>
 where
     R: tokio::io::AsyncRead + Unpin + Send + 'static,
@@ -611,10 +632,8 @@ where
         let reader = BufReader::new(stream);
         let mut lines = reader.lines();
         while let Ok(Some(line)) = lines.next_line().await {
-            if let Some(slot) = &hub_exit {
-                if let Some(exit) = backup::hub_exit_from_litestream_line(&line) {
-                    *slot.lock() = Some(exit);
-                }
+            if let Some(f) = &on_line {
+                f(&line);
             }
             let stamped = format!("[{stream_name}] {line}");
             buf.push(stamped.clone());

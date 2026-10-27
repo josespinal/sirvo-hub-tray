@@ -87,10 +87,24 @@ pub fn write_restore_failed_marker(db_path: &Path) -> std::io::Result<()> {
 pub fn restore_failed_help(litestream: &Path, config: &Path, db_path: &Path) -> Vec<String> {
     vec![
         "RESTORE FAILED earlier: running WITHOUT backups to protect the existing backup.".into(),
-        format!("To recover: stop the hub, move {} aside, run", db_path.display()),
-        format!("  \"{}\" restore -config \"{}\" \"{}\"", litestream.display(), config.display(), db_path.display()),
-        format!("then delete {} and start the hub.", restore_failed_marker(db_path).display()),
+        format!("To recover: stop the hub, move {} aside, run", shown(db_path)),
+        format!("  \"{}\" restore -config \"{}\" \"{}\"", shown(litestream), shown(config), shown(db_path)),
+        format!("then delete {} and start the hub.", shown(&restore_failed_marker(db_path))),
     ]
+}
+
+/// A path as an operator would type it: without Windows' `\\?\` prefix.
+fn shown(path: &Path) -> String {
+    let s = path.display().to_string();
+    s.strip_prefix(r"\\?\").map(str::to_string).unwrap_or(s)
+}
+
+/// Litestream 0.5.17 on Windows fails a restore AFTER the database is
+/// written and renamed into place: it then fsyncs the folder, which Windows
+/// refuses ("Access is denied"). Fixed upstream (benbjohnson/litestream#1548,
+/// not released yet); drop this once the bundled Litestream includes it.
+pub fn is_windows_dir_sync_error(line: &str) -> bool {
+    line.contains("sync restore output dir")
 }
 
 /// Litestream takes the hub command as ONE string and splits it with
@@ -191,6 +205,25 @@ mod tests {
             r"'C:\Program Files\Sirvo Hub\resources\node\win32-x64\node.exe' 'C:\Program Files\Sirvo Hub\resources\hub\dist\index.js'"
         );
         assert_eq!(exec_command(&["/Users/o'brien/node"]), r"'/Users/o'\''brien/node'");
+    }
+
+    #[test]
+    fn recognizes_the_windows_folder_sync_failure_after_a_restore() {
+        assert!(is_windows_dir_sync_error(
+            r"Error: sync restore output dir: sync C:\Users\x\AppData\Roaming\com.sirvo.hub.tray: Access is denied."
+        ));
+        assert!(!is_windows_dir_sync_error("Error: decode database: unexpected EOF"));
+    }
+
+    #[test]
+    fn recovery_help_shows_paths_without_the_verbatim_prefix() {
+        let help = restore_failed_help(
+            Path::new(r"\\?\C:\Program Files\Sirvo Hub\resources\litestream\litestream.exe"),
+            Path::new(r"\\?\C:\Program Files\Sirvo Hub\resources\hub\litestream.yml"),
+            Path::new(r"C:\Users\x\hub.sqlite"),
+        );
+        assert!(help[2].contains(r#""C:\Program Files\Sirvo Hub\resources\litestream\litestream.exe" restore"#), "{}", help[2]);
+        assert!(!help.iter().any(|l| l.contains(r"\\?\")));
     }
 
     #[test]
